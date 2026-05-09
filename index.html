@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FynalHire — Hiring Intelligence Platform</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{
+  --accent:#2563eb;
+  --bg:#f8fbff;
+  --ink:#0f172a;
+  --ink2:#334155;
+  --border:#dbeafe;
+  --amber-bg:#fef3c7;
+  --purple-bg:#ede9fe;
+  --green-bg:#dcfce7;
+  --red-bg:#fee2e2;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:#0f172a;padding:18px 28px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100}
+.logo{font-size:30px;font-weight:900;cursor:pointer}.logo .blue{color:#2563eb}.logo .white{color:#fff}
+nav{display:flex;gap:14px;align-items:center;flex-wrap:wrap}.nav-btn,.sign-btn{background:transparent;border:none;color:#fff;font-weight:700;font-size:14px;cursor:pointer}.sign-btn{background:#2563eb;padding:10px 16px;border-radius:10px}
+.page{display:none}.page.active{display:block}
+.hero{max-width:1100px;margin:0 auto;padding:80px 24px 44px;text-align:center}
+.pill{display:inline-block;padding:10px 16px;border-radius:999px;background:#fff;border:1.5px solid var(--border);font-weight:700;color:var(--accent);margin-bottom:22px}
+.hero h1{font-size:clamp(30px,4.8vw,48px);line-height:1.1;margin-bottom:18px}.hero p{max-width:850px;margin:0 auto;color:var(--ink2);font-size:18px;line-height:1.8}
+.hero-actions{margin-top:28px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+.btn-primary{background:var(--accent);border:none;color:white;padding:14px 22px;border-radius:14px;font-weight:800;cursor:pointer}
+.btn-outline{background:white;border:1.5px solid var(--border);padding:14px 22px;border-radius:14px;font-weight:800;cursor:pointer;color:#111}
+.selector{max-width:1100px;margin:22px auto 70px;padding:0 24px;display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px}
+.card{background:white;border:1.5px solid var(--border);border-radius:22px;padding:28px}.card p{color:var(--ink2);line-height:1.7}
+.content{max-width:1100px;margin:0 auto;padding:55px 24px 80px}.section-head{text-align:center;margin-bottom:30px}.section-head h1{font-size:clamp(30px,4vw,46px);margin-bottom:10px}.section-head p{color:var(--ink2);font-size:17px}
+.plan-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px}.plan{background:white;border:1.5px solid var(--border);border-radius:20px;padding:26px}.price{font-size:42px;font-weight:900;margin:14px 0}.price span{font-size:16px;color:var(--ink2)}
+.scan-box{background:white;border:1.5px solid var(--border);border-radius:24px;padding:28px}.scan-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}textarea{width:100%;min-height:230px;padding:16px;border-radius:14px;border:1.5px solid var(--border);resize:vertical}
+.upload{border:2px dashed var(--border);padding:18px;border-radius:14px;margin-bottom:12px;text-align:center;position:relative;background:#f8fbff}.upload input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.results{display:none;margin-top:30px}.score{font-size:64px;font-weight:900;color:var(--accent)}.insights{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-top:20px}.insight{border:1.5px solid var(--border);border-radius:16px;padding:18px;background:white}.warning{background:var(--amber-bg)}.purple{background:var(--purple-bg)}
+.fh-result-list{padding-left:18px;line-height:1.65;color:#334155}.fh-small-note{color:#64748b;font-size:12px;margin-top:16px;line-height:1.5}
+.status{display:none;margin-top:18px;padding:16px;border-radius:14px;border:1.5px solid #bfdbfe;background:#eff6ff;color:#1e3a8a;font-weight:700;line-height:1.6}.status.error{background:#fee2e2;color:#991b1b;border-color:#fecaca}.status.success{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+.auth-modal-overlay{display:none;position:fixed;inset:0;background:rgba(15,23,42,.62);z-index:9999;align-items:center;justify-content:center;padding:20px}
+.auth-modal{background:#fff;max-width:500px;width:100%;border-radius:18px;padding:30px;position:relative;box-shadow:0 25px 80px rgba(0,0,0,.25)}
+.auth-modal input{width:100%;padding:13px 14px;border:1.5px solid #cbd5e1;border-radius:10px;margin:9px 0}.auth-close{position:absolute;top:12px;right:14px;background:#dbeafe!important;color:#2563eb!important;width:auto!important;padding:7px 12px!important;border:none;border-radius:8px;cursor:pointer}
+.auth-status{display:none;margin-top:12px;padding:12px;border-radius:10px;background:#eff6ff;color:#1e3a8a;border:1px solid #bfdbfe;font-size:14px;line-height:1.5;font-weight:700}.auth-status.error{background:#fee2e2;color:#991b1b;border-color:#fecaca}.auth-status.success{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+.security-bar{display:none;background:#fef3c7;border-bottom:1px solid #f59e0b;padding:10px 24px;color:#92400e;font-weight:800;text-align:center}.security-bar.show{display:block}
+footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer p{max-width:850px;margin:10px auto;color:#cbd5e1;line-height:1.7}
+@media(max-width:760px){.scan-grid{grid-template-columns:1fr}header{align-items:flex-start;gap:12px;flex-direction:column}}
+
+.limit-box{
+  display:block;
+  margin-top:18px;
+  padding:18px;
+  border-radius:16px;
+  border:1.5px solid #f59e0b;
+  background:#fef3c7;
+  color:#92400e;
+  font-weight:800;
+  line-height:1.6;
+}
+.limit-box p{margin:0 0 12px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo" onclick="showPage('home')"><span class="blue">Fynal</span><span class="white">Hire</span></div>
+  <nav>
+    <button type="button" class="nav-btn" onclick="showPage('home')">Home</button>
+    <button type="button" class="nav-btn" onclick="showPage('about')">About</button>
+    <button type="button" class="nav-btn" onclick="showPage('why')">Why Choose Us</button>
+    <button type="button" class="nav-btn" onclick="showPage('legal')">Legal</button>
+    <span id="userChip" style="display:none;color:white;font-weight:800;font-size:13px"></span><button type="button" class="sign-btn" id="authTopBtn" onclick="handleAuthButton()">Sign In</button>
+  </nav>
+</header>
+
+<div class="security-bar" id="securityBar">For your security, you will be signed out in <span id="idleTimer">02:00</span> due to inactivity. Move your mouse or press any key to stay signed in.</div>
+
+<section id="page-home" class="page active">
+  <div class="hero">
+    <div class="pill">Hiring Intelligence Platform</div>
+    <h1>Know exactly where you stand before you apply or shortlist</h1>
+    <p>FynalHire analyzes recruiter psychology, hiring signals, leadership evidence, commercial impact and CV positioning to improve shortlist probability and help recruiters make faster, lower-risk hiring decisions.</p>
+    <div class="hero-actions">
+      <button type="button" class="btn-primary" onclick="openUserTypeModal('scan')">Start Free Scan →</button>
+      <button type="button" class="btn-outline" onclick="openUserTypeModal('pricing')">Choose Your Plan</button>
+    </div>
+  </div>
+  <section class="selector">
+    <div class="card">
+      <h2>👤 For Job Seekers</h2>
+      <p>Understand why recruiters may reject your CV, what weakens your profile and what changes can improve interview probability.</p>
+      <button type="button" class="btn-primary" onclick="startAreaFlow('jobseeker')">Enter Job Seeker Area</button>
+    </div>
+    <div class="card">
+      <h2>🏢 For Recruiters</h2>
+      <p>Reduce screening fatigue, identify hiring risks and shortlist candidates faster using recruiter-style intelligence.</p>
+      <button type="button" class="btn-primary" onclick="startAreaFlow('recruiter')">Enter Recruiter Area</button>
+    </div>
+  </section>
+</section>
+
+<section id="page-pricing" class="page">
+  <div class="content">
+    <div class="section-head"><h1 id="pricingTitle">Pricing</h1><p id="pricingSub">Select whether you are a Job Seeker or Recruiter to see the correct plans.</p></div>
+    <div class="plan-grid" id="jobPricing" style="display:none">
+      <div class="plan"><h3>Free</h3><div class="price">Free</div><ul><li>3 scans/month</li><li>CV score against JD</li><li>Score capped at 9.5</li></ul><button type="button" class="btn-primary" style="width:100%;margin-top:15px" onclick="selectPlan('free','jobseeker')">Start Free</button></div>
+      <div class="plan"><h3>Growth</h3><div class="price">$10<span>/mo</span></div><ul><li>Unlimited scans</li><li>Detailed analysis</li><li>PDF export</li></ul><button type="button" class="btn-primary" style="width:100%;margin-top:15px" onclick="selectPlan('growth','jobseeker')">Buy Growth</button></div>
+      <div class="plan"><h3>Elite</h3><div class="price">$14<span>/mo</span></div><ul><li>Recruiter Mind Simulation™</li><li>Truth Mode™</li><li>Executive Presence Score™</li><li>Commercial Impact Analysis™</li></ul><button type="button" class="btn-primary" style="width:100%;margin-top:15px" onclick="selectPlan('elite','jobseeker')">Buy Elite</button></div>
+    </div>
+    <div class="plan-grid" id="recruiterPricing" style="display:none">
+      <div class="plan"><h3>Recruiter Free</h3><div class="price">Free</div><ul><li>2 scans/month</li><li>Candidate score</li><li>Keyword analysis</li></ul><button type="button" class="btn-primary" style="width:100%;margin-top:15px" onclick="selectPlan('rec_free','recruiter')">Start Recruiter Free</button></div>
+      <div class="plan"><h3>Recruiter Premium</h3><div class="price">$50<span>/mo</span></div><ul><li>Bulk CV upload</li><li>Candidate ranking</li><li>Hiring Risk Flags™</li><li>Recruiter fatigue optimization</li></ul><button type="button" class="btn-primary" style="width:100%;margin-top:15px" onclick="selectPlan('rec_premium','recruiter')">Buy Recruiter Premium</button></div>
+    </div>
+    <div id="pricingChoiceNotice" class="card" style="text-align:center"><p>Please select Job Seeker or Recruiter first.</p><button type="button" class="btn-primary" onclick="openUserTypeModal('pricing')">Select User Type</button></div>
+  </div>
+</section>
+
+
+<section id="page-dashboard" class="page">
+  <div class="content">
+    <div class="section-head">
+      <h1 id="dashboardTitle">Welcome to FynalHire</h1>
+      <p id="dashboardSub">You are signed in.</p>
+    </div>
+    <div class="selector">
+      <div class="card">
+        <h2 id="dashScanTitle">Scan CV</h2>
+        <p id="dashScanText">Start a new scan.</p>
+        <button type="button" class="btn-primary" onclick="enterArea(selectedArea)">Scan CV</button>
+      </div>
+      <div class="card" id="dashUpgradeCard">
+        <h2>Upgrade</h2>
+        <p>See plans and unlock more features.</p>
+        <button type="button" class="btn-primary" onclick="showPricingFor(selectedArea)">Upgrade Plan</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="page-app" class="page">
+  <div class="content">
+    <div class="section-head"><h1 id="appTitle">FynalHire Scanner</h1><p id="appSub">Upload or paste your CV and compare it with a job description.</p></div>
+    <div class="scan-box">
+      <div class="scan-grid">
+        <div><h3>Job Description</h3><textarea id="jdText" placeholder="Paste Job Description here..."></textarea></div>
+        <div><h3 id="cvHeading">CV / Resume</h3><div class="upload"><input type="file" id="cvFile" accept=".txt,.pdf,.doc,.docx" onchange="handleCVUpload(event)"><div id="uploadText">📄 Upload CV — PDF / Word / TXT</div><small id="uploadNote">TXT can be read now. PDF/Word extraction will be completed through backend parser.</small></div><textarea id="cvText" placeholder="Or paste CV text here..."></textarea></div>
+      </div>
+      <button type="button" class="btn-primary" style="margin-top:20px;width:100%" onclick="analyzeWithFynalHireAPI(event)">Analyze CV</button>
+      <div class="status" id="analysisStatus"></div>
+      <div class="results" id="results"></div>
+    </div>
+  </div>
+</section>
+
+<section id="page-about" class="page"><div class="content"><div class="section-head"><h1>About FynalHire</h1><p>Built to remove guesswork from career and hiring decisions.</p></div><div class="card"><p>FynalHire was created for people who are tired of applying blindly and recruiters who are tired of screening manually. We do not flatter CVs. We stress test them with recruiter-style intelligence.</p></div></div></section>
+<section id="page-why" class="page"><div class="content"><div class="section-head"><h1>Why Choose Us</h1><p>We combine recruiter psychology, hiring signals and evidence-based CV analysis.</p></div><section class="selector"><div class="card"><h2>🧠 Recruiter Mind Simulation™</h2><p>See what a recruiter may think before they shortlist or reject.</p></div><div class="card"><h2>⚡ 8 Second Test™</h2><p>Understand whether your CV survives fast first-glance screening.</p></div></section></div></section>
+<section id="page-legal" class="page"><div class="content"><div class="section-head"><h1>Legal</h1><p>FynalHire provides AI-assisted analysis only. It does not guarantee interviews, selection or employment outcomes.</p></div></div></section>
+
+<footer><h3>FynalHire</h3><p>Hiring Intelligence Platform for job seekers and recruiters.</p><p>FynalHire provides probabilistic AI-assisted hiring analysis and recruiter-style evaluation. Results do not guarantee interviews, hiring decisions or employment outcomes.</p></footer>
+
+<div id="userTypeModal" class="auth-modal-overlay">
+  <div class="auth-modal">
+    <button type="button" class="auth-close" onclick="closeUserTypeModal()">Close</button>
+    <h2>How do you want to use FynalHire?</h2>
+    <p style="color:#334155;line-height:1.6">Select your user type so we can show the right scanner and pricing.</p>
+    <button type="button" class="btn-primary" onclick="chooseUserType('jobseeker')" style="width:100%;margin-bottom:10px">👤 I am a Job Seeker</button>
+    <button type="button" class="btn-outline" onclick="chooseUserType('recruiter')" style="width:100%">🏢 I am a Recruiter</button>
+  </div>
+</div>
+
+<div id="authModal" class="auth-modal-overlay">
+  <div class="auth-modal">
+    <button type="button" class="auth-close" onclick="closeAuth()">Close</button>
+    <h2>Sign In / Create Account</h2>
+    <p style="color:#334155;line-height:1.6">Create an account or sign in before continuing.</p>
+    <input id="authEmail" type="email" placeholder="Email address">
+    <input id="authPassword" type="password" placeholder="Password">
+    <div id="authStatus" class="auth-status"></div>
+    <button type="button" class="btn-primary" style="width:100%;margin-top:10px" onclick="signupUser()">Create Account</button>
+    <button type="button" class="btn-outline" style="width:100%;margin-top:8px" onclick="loginUser()">Sign In</button>
+    <button type="button" class="btn-outline" style="width:100%;margin-top:8px" onclick="loginWithGoogle()">Continue with Google</button>
+  </div>
+</div>
+
+<script>
+const FYNALHIRE_SUPABASE_URL="https://yfgedcvrdqkobnjokfch.supabase.co";
+const FYNALHIRE_SUPABASE_KEY="sb_publishable_Jaj4niquWBd9RaOtVlWJBA_HZue607V";
+const fynalhireClient=window.supabase.createClient(FYNALHIRE_SUPABASE_URL,FYNALHIRE_SUPABASE_KEY);
+
+let selectedArea=localStorage.getItem("fh_area")||"jobseeker";
+let userTypePurpose="scan";
+let pendingAction=null;
+let pendingPlan=null;
+let signedIn=false;
+let idleSeconds=900;
+let idleInterval=null;
+
+const STRIPE_LINKS={
+  growth:"PASTE_STRIPE_GROWTH_CHECKOUT_URL_HERE",
+  elite:"PASTE_STRIPE_ELITE_CHECKOUT_URL_HERE",
+  rec_premium:"PASTE_STRIPE_RECRUITER_PREMIUM_CHECKOUT_URL_HERE"
+};
+
+function showPage(page){
+  document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
+  document.getElementById("page-"+page)?.classList.add("active");
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+function showAuthStatus(message,type=""){
+  const box=document.getElementById("authStatus");
+  box.style.display="block";
+  box.className="auth-status "+type;
+  box.innerHTML=message;
+}
+function showAnalysisStatus(message,type=""){
+  const box=document.getElementById("analysisStatus");
+  box.style.display="block";
+  box.className="status "+type;
+  box.innerHTML=message;
+}
+function openAuth(){
+  document.getElementById("authStatus").style.display="none";
+  document.getElementById("authModal").style.display="flex";
+}
+function closeAuth(){document.getElementById("authModal").style.display="none";}
+function openUserTypeModal(purpose){userTypePurpose=purpose||"scan";document.getElementById("userTypeModal").style.display="flex";}
+function closeUserTypeModal(){document.getElementById("userTypeModal").style.display="none";}
+
+function chooseUserType(type){
+  selectedArea=type;
+  localStorage.setItem("fh_area",type);
+
+  if(userTypePurpose==="pricing"){
+    closeUserTypeModal();
+    showPricingFor(type);
+  }else{
+    startAreaFlow(type);
+  }
+}
+function showPricingFor(type){
+  selectedArea=type;
+  localStorage.setItem("fh_area",type);
+  document.getElementById("jobPricing").style.display=type==="jobseeker"?"grid":"none";
+  document.getElementById("recruiterPricing").style.display=type==="recruiter"?"grid":"none";
+  document.getElementById("pricingChoiceNotice").style.display="none";
+  document.getElementById("pricingTitle").textContent=type==="jobseeker"?"Job Seeker Plans":"Recruiter Plans";
+  document.getElementById("pricingSub").textContent=type==="jobseeker"?"Plans for candidates who want better shortlist chances.":"Plans for recruiters who want faster candidate screening.";
+  showPage("pricing");
+}
+async function handleAuthButton(){
+  if(signedIn){await logoutUser();}
+  else{openAuth();}
+}
+
+async function refreshAuth(){
+  try{
+    const {data}=await fynalhireClient.auth.getSession();
+    signedIn=!!data.session;
+
+    const btn=document.getElementById("authTopBtn");
+    const chip=document.getElementById("userChip");
+
+    if(signedIn){
+      btn.textContent="Sign Out";
+      if(chip){
+        chip.textContent=data.session.user.email || "Signed in";
+        chip.style.display="inline-block";
+      }
+      startIdleTimer();
+    }else{
+      btn.textContent="Sign In";
+      if(chip){
+        chip.textContent="";
+        chip.style.display="none";
+      }
+      stopIdleTimer();
+    }
+  }catch(e){
+    console.error("refreshAuth failed",e);
+  }
+}
+
+async function signupUser(){
+  const email=document.getElementById("authEmail").value.trim();
+  const password=document.getElementById("authPassword").value;
+  if(!email||!password){showAuthStatus("Please enter email and password.","error");return;}
+  showAuthStatus("Creating account...");
+  try{
+    const {data,error}=await fynalhireClient.auth.signUp({
+      email,
+      password,
+      options:{data:{user_type:selectedArea}}
+    });
+    if(error){showAuthStatus("Account creation failed: "+error.message,"error");return;}
+    if(data && data.session){
+      showAuthStatus("Account created and signed in. Opening your area...","success");
+      closeAuth();
+      await afterSuccessfulLogin();
+    }else{
+      showAuthStatus("Account created. If email confirmation is enabled, please verify your email, then sign in.","success");
+    }
+  }catch(e){showAuthStatus("Unexpected signup error: "+e.message,"error");}
+}
+
+async function loginUser(){
+  const email=document.getElementById("authEmail").value.trim();
+  const password=document.getElementById("authPassword").value;
+
+  if(!email||!password){
+    showAuthStatus("Please enter email and password.","error");
+    return;
+  }
+
+  showAuthStatus("Logging in...");
+
+  try{
+    const {data,error}=await fynalhireClient.auth.signInWithPassword({email,password});
+
+    if(error){
+      showAuthStatus("Login failed: "+error.message+"<br><button type='button' style='margin-top:8px;background:transparent;border:none;color:#2563eb;font-weight:800;cursor:pointer' onclick='showForgotPassword()'>Forgot password?</button>","error");
+      console.error("Supabase login error:",error);
+      return;
+    }
+
+    if(!data || !data.session){
+      showAuthStatus("Login response received, but no session was created. If email confirmation is enabled, please confirm your email first.","error");
+      return;
+    }
+
+    signedIn=true;
+    showAuthStatus("Login successful.","success");
+    closeAuth();
+    await afterSuccessfulLogin();
+
+  }catch(e){
+    showAuthStatus("Login error: "+e.message+"<br><br>If this happens from a downloaded file, deploy to Vercel and test on HTTPS.","error");
+    console.error(e);
+  }
+}
+
+async function loginWithGoogle(){
+  if(window.location.protocol==="file:"){
+    showAuthStatus("Google login needs the live HTTPS website. It will not work reliably from a downloaded local file.","error");
+    return;
+  }
+  const {error}=await fynalhireClient.auth.signInWithOAuth({
+    provider:"google",
+    options:{redirectTo:window.location.origin,queryParams:{access_type:"offline",prompt:"consent"}}
+  });
+  if(error){showAuthStatus("Google login failed: "+error.message,"error");}
+}
+
+async function logoutUser(){
+  await fynalhireClient.auth.signOut();
+  signedIn=false;
+  stopIdleTimer();
+  showPage("home");
+  await refreshAuth();
+}
+
+async function afterSuccessfulLogin(){
+  await refreshAuth();
+
+  if(pendingAction==="enter_area"){
+    enterArea(selectedArea);
+  }else if(pendingAction==="select_plan" && pendingPlan){
+    completePlanSelection(pendingPlan,selectedArea);
+  }else{
+    showPage("dashboard");
+  }
+
+  pendingAction=null;
+}
+
+async function requireLogin(area){
+  selectedArea=area;
+  localStorage.setItem("fh_area",area);
+  try{
+    const {data}=await fynalhireClient.auth.getSession();
+    if(!data || !data.session){
+      openAuth();
+      return false;
+    }
+    signedIn=true;
+    return true;
+  }catch(e){
+    console.warn("Auth check failed:",e);
+    openAuth();
+    return false;
+  }
+}
+async function startAreaFlow(type){
+  selectedArea=type;
+  localStorage.setItem("fh_area",type);
+  pendingAction="enter_area";
+
+  // Simpler and more reliable flow:
+  // If already signed in -> enter area
+  // Otherwise -> immediately open auth modal
+
+  if(signedIn){
+    enterArea(type);
+    return;
+  }
+
+  closeUserTypeModal();
+
+  setTimeout(()=>{
+    openAuth();
+  },120);
+}
+function enterArea(area){
+  if(!signedIn){
+    pendingAction="enter_area";
+    selectedArea=area || selectedArea;
+    openAuth();
+    return;
+  }
+
+  selectedArea=area || selectedArea;
+  localStorage.setItem("fh_area",selectedArea);
+  document.getElementById("appTitle").textContent=selectedArea==="recruiter"?"Recruiter Screening Area":"Job Seeker CV Scanner";
+  document.getElementById("appSub").textContent=selectedArea==="recruiter"?"Upload CVs and compare them against the role requirement.":"Upload or paste your CV and compare it with a job description.";
+  document.getElementById("cvHeading").textContent=selectedArea==="recruiter"?"Candidate CV":"CV / Resume";
+  showPage("app");
+}
+
+async function selectPlan(plan,type){
+  selectedArea=type;
+  localStorage.setItem("fh_area",type);
+  pendingPlan=plan;
+  pendingAction="select_plan";
+  const ok=await requireLogin(type);
+  if(ok){completePlanSelection(plan,type);}
+}
+function completePlanSelection(plan,type){
+  if(plan==="free"||plan==="rec_free"){enterArea(type);return;}
+  const url=STRIPE_LINKS[plan];
+  if(!url || url.includes("PASTE_STRIPE")){
+    alert("Stripe checkout link for this plan is not connected yet. Once Stripe products are created, this button will take users to Stripe Checkout.");
+    return;
+  }
+  window.location.href=url;
+}
+
+function resetIdle(){
+  if(!signedIn)return;
+  idleSeconds=900;
+  document.getElementById("securityBar").classList.remove("show");
+  updateIdleDisplay();
+}
+function updateIdleDisplay(){
+  const m=Math.floor(idleSeconds/60),s=idleSeconds%60;
+  document.getElementById("idleTimer").textContent=`${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+  const bar=document.getElementById("securityBar");
+  if(signedIn && idleSeconds<=120){bar.classList.add("show");}else{bar.classList.remove("show");}
+}
+function startIdleTimer(){
+  stopIdleTimer();
+  idleSeconds=900;
+  updateIdleDisplay();
+  idleInterval=setInterval(async()=>{
+    idleSeconds--;
+    updateIdleDisplay();
+    if(idleSeconds<=0){
+      alert("You have been signed out due to inactivity.");
+      await logoutUser();
+    }
+  },1000);
+}
+function stopIdleTimer(){
+  if(idleInterval)clearInterval(idleInterval);
+  idleInterval=null;
+  document.getElementById("securityBar").classList.remove("show");
+}
+["click","keydown","mousemove","scroll","touchstart"].forEach(ev=>document.addEventListener(ev,resetIdle,{passive:true}));
+
+function handleCVUpload(event){
+  const file=event.target.files&&event.target.files[0];
+  if(!file)return;
+  document.getElementById("uploadText").textContent="✓ "+file.name;
+  if(file.name.toLowerCase().endsWith(".txt")){
+    const r=new FileReader();
+    r.onload=e=>{document.getElementById("cvText").value=e.target.result||"";document.getElementById("uploadNote").textContent="TXT file loaded successfully.";};
+    r.readAsText(file);
+  }else{
+    document.getElementById("uploadNote").textContent="File attached. PDF/Word text extraction will be completed through backend parser. For now, paste CV text below.";
+  }
+}
+
+async function analyzeWithFynalHireAPI(event){
+  resetIdle();
+  const {data:sessionData}=await fynalhireClient.auth.getSession();
+  if(!sessionData.session){openAuth();return;}
+  const jd=document.getElementById("jdText").value.trim();
+  const cv=document.getElementById("cvText").value.trim();
+  if(!jd||!cv){alert("Please paste both Job Description and CV text.");return;}
+  const btn=event?.target,old=btn?.textContent;
+  if(btn){btn.textContent="Analyzing...";btn.disabled=true;}
+  showAnalysisStatus("Step 1/3: Sending request securely to FynalHire backend...");
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),90000);
+  try{
+    setTimeout(()=>showAnalysisStatus("Step 2/3: Recruiter-style analysis is running. This can take 20–60 seconds..."),2500);
+    const res=await fetch(`${FYNALHIRE_SUPABASE_URL}/functions/v1/analyze-cv`,{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":`Bearer ${sessionData.session.access_token}`},
+      body:JSON.stringify({jd_text:jd,cv_text:cv,audience:selectedArea,region:Intl.DateTimeFormat().resolvedOptions().timeZone||"global"}),
+      signal:controller.signal
+    });
+    clearTimeout(timeout);
+    const data=await res.json();
+    if(!res.ok){
+      showAnalysisStatus("Backend error: "+(data.message||data.error||"Analysis failed."),"error");
+      console.error(data);
+      return;
+    }
+    showAnalysisStatus("Step 3/3: Analysis completed.","success");
+    renderLiveResult(data.result,data.usage);
+  }catch(e){
+    clearTimeout(timeout);
+    showAnalysisStatus(e.name==="AbortError"?"Request timed out after 90 seconds. Check Supabase Edge Function logs.":"Live analysis failed: "+e.message,"error");
+  }finally{
+    if(btn){btn.textContent=old;btn.disabled=false;}
+  }
+}
+
+function renderLiveResult(r,usage){
+  const results=document.getElementById("results");
+  results.style.display="block";
+  const locked=Array.isArray(r.locked_sections)?`<div class="insight warning"><h4>🔒 Locked Sections</h4><ul class="fh-result-list">${r.locked_sections.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>`:"";
+  results.innerHTML=`<div class="score">${Number(r.overall_score||0).toFixed(1)}<span style="font-size:30px;color:#64748b">/10</span></div><p><strong>${esc(r.verdict||"")}</strong></p><p style="color:#334155;line-height:1.75">${esc(r.summary||"")}</p><div class="insights">${listCard("🧭 What The JD Actually Wants™",r.jd_really_wants)}${listCard("✅ What Your CV Already Proves Well™",r.cv_proves_well)}${listCard("⚠️ What Is Missing Or Weak™",r.missing_or_weak,"warning")}${listCard("➕ What To Add To Your CV™",r.what_to_add)}${textCard("🧠 Recruiter Mind Simulation™",r.recruiter_mind_simulation,"purple")}${textCard("⚡ 8 Second Recruiter Test™",r.eight_second_test&&r.eight_second_test.finding,"warning")}${textCard("💼 Commercial Impact Analysis™",r.commercial_impact)}${textCard("👔 Executive Presence™",r.executive_presence&&r.executive_presence.comment)}${textCard("🪞 Human Tone Analysis™",r.human_tone_analysis,"warning")}${listCard("🚩 Why You May NOT Be Shortlisted™",r.why_not_shortlisted,"warning")}${listCard("🔑 Keywords Found",r.keywords_found)}${listCard("❌ Keywords Missing",r.keywords_missing,"warning")}${listCard("⚠️ Recruiter Risk Flags",r.risk_flags,"warning")}${locked}</div><p class="fh-small-note">${esc(r.disclaimer||"FynalHire provides AI-assisted analysis only and does not guarantee employment outcomes.")}</p>${usage?`<p class="fh-small-note">Monthly usage: ${usage.scans_used} / ${usage.limit===9999?"fair-use unlimited":usage.limit}</p>`:""}`;
+  results.scrollIntoView({behavior:"smooth"});
+}
+function listCard(title,arr,cls=""){arr=Array.isArray(arr)?arr:[];if(!arr.length)return "";return `<div class="insight ${cls}"><h4>${title}</h4><ul class="fh-result-list">${arr.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>`;}
+function textCard(title,text,cls=""){if(!text)return "";return `<div class="insight ${cls}"><h4>${title}</h4><p>${esc(text||"")}</p></div>`;}
+function esc(str){return String(str||"").replace(/[&<>"']/g,s=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[s]));}
+
+window.addEventListener("load",async()=>{
+  console.log("FynalHire clean rebuilt auth flow loaded.");
+  await refreshAuth();
+});
+fynalhireClient.auth.onAuthStateChange(()=>refreshAuth());
+</script>
+
+</body>
+</html>
