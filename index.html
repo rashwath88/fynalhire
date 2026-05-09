@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>FynalHire — Hiring Intelligence Platform</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2">console.log("FynalHire direct API auth version loaded.");
+</script>
 <style>
 :root{
   --accent:#2563eb;
@@ -316,74 +317,61 @@ async function loginUser(){
   showAuthStatus("Logging in...");
   if(btn){btn.disabled=true;btn.textContent="Logging in...";}
 
-  async function directPasswordLogin(){
-    const controller=new AbortController();
-    const timeout=setTimeout(()=>controller.abort(),25000);
-
-    try{
-      const res=await fetch(`${FYNALHIRE_SUPABASE_URL}/auth/v1/token?grant_type=password`,{
-        method:"POST",
-        headers:{
-          "Content-Type":"application/json",
-          "apikey":FYNALHIRE_SUPABASE_KEY
-        },
-        body:JSON.stringify({email,password}),
-        signal:controller.signal
-      });
-
-      clearTimeout(timeout);
-      const data=await res.json();
-
-      if(!res.ok){
-        const msg=data.error_description || data.msg || data.error || "Login failed.";
-        throw new Error(msg);
-      }
-
-      if(!data.access_token || !data.refresh_token){
-        throw new Error("Login succeeded but no valid session token was returned.");
-      }
-
-      const {error:setErr}=await fynalhireClient.auth.setSession({
-        access_token:data.access_token,
-        refresh_token:data.refresh_token
-      });
-
-      if(setErr) throw setErr;
-      return true;
-    }catch(e){
-      clearTimeout(timeout);
-      throw e;
-    }
-  }
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),25000);
 
   try{
-    let loggedIn=false;
+    const res=await fetch(`${FYNALHIRE_SUPABASE_URL}/auth/v1/token?grant_type=password`,{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "apikey":FYNALHIRE_SUPABASE_KEY,
+        "Authorization":"Bearer "+FYNALHIRE_SUPABASE_KEY
+      },
+      body:JSON.stringify({email,password}),
+      signal:controller.signal
+    });
 
-    try{
-      const jsLoginPromise=fynalhireClient.auth.signInWithPassword({email,password});
-      const timeoutPromise=new Promise((_,reject)=>setTimeout(()=>reject(new Error("Supabase JS login timeout")),12000));
-      const {data,error}=await Promise.race([jsLoginPromise,timeoutPromise]);
+    clearTimeout(timeout);
+    const data=await res.json();
 
-      if(error) throw error;
-      if(data && data.session) loggedIn=true;
-    }catch(jsErr){
-      console.warn("Supabase JS login failed or timed out, trying direct auth fallback:",jsErr);
-      await directPasswordLogin();
-      loggedIn=true;
-    }
-
-    if(!loggedIn){
-      showAuthStatus("Login response received, but no session was created.","error");
+    if(!res.ok){
+      const msg=data.error_description || data.msg || data.error || "Login failed.";
+      showAuthStatus("Login failed: "+msg+"<br><button type='button' style='margin-top:8px;background:transparent;border:none;color:#2563eb;font-weight:800;cursor:pointer' onclick='showForgotPassword()'>Forgot password?</button>","error");
+      console.error("Supabase login error:",data);
       return;
     }
 
+    if(!data.access_token || !data.refresh_token){
+      showAuthStatus("Login succeeded but no valid session token was returned.","error");
+      console.error("Unexpected login response:",data);
+      return;
+    }
+
+    const {error:setErr}=await fynalhireClient.auth.setSession({
+      access_token:data.access_token,
+      refresh_token:data.refresh_token
+    });
+
+    if(setErr){
+      showAuthStatus("Login succeeded but session could not be saved: "+setErr.message,"error");
+      console.error("setSession error:",setErr);
+      return;
+    }
+
+    signedIn=true;
     showAuthStatus("Login successful.","success");
     closeAuth();
     await afterSuccessfulLogin();
 
   }catch(e){
-    showAuthStatus("Login failed: "+e.message+"<br><button type='button' style='margin-top:8px;background:transparent;border:none;color:#2563eb;font-weight:800;cursor:pointer' onclick='showForgotPassword()'>Forgot password?</button>","error");
-    console.error("Login final error:",e);
+    clearTimeout(timeout);
+    if(e.name==="AbortError"){
+      showAuthStatus("Login request timed out. Please check connection and try again.","error");
+    }else{
+      showAuthStatus("Login failed: "+e.message,"error");
+    }
+    console.error(e);
   }finally{
     if(btn){btn.disabled=false;btn.textContent="Sign In";}
   }
