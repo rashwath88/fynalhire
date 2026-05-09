@@ -185,6 +185,7 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
 <script>
 const FYNALHIRE_SUPABASE_URL="https://yfgedcvrdqkobnjokfch.supabase.co";
 const FYNALHIRE_SUPABASE_KEY="sb_publishable_Jaj4niquWBd9RaOtVlWJBA_HZue607V";
+const FYNALHIRE_SITE_URL=window.location.origin || "https://fynalhire.vercel.app";
 const fynalhireClient=window.supabase.createClient(FYNALHIRE_SUPABASE_URL,FYNALHIRE_SUPABASE_KEY);
 
 let selectedArea=localStorage.getItem("fh_area")||"jobseeker";
@@ -305,6 +306,7 @@ async function signupUser(){
 async function loginUser(){
   const email=document.getElementById("authEmail").value.trim();
   const password=document.getElementById("authPassword").value;
+  const btn=document.getElementById("signInBtn");
 
   if(!email||!password){
     showAuthStatus("Please enter email and password.","error");
@@ -312,42 +314,118 @@ async function loginUser(){
   }
 
   showAuthStatus("Logging in...");
+  if(btn){btn.disabled=true;btn.textContent="Logging in...";}
+
+  async function directPasswordLogin(){
+    const controller=new AbortController();
+    const timeout=setTimeout(()=>controller.abort(),25000);
+
+    try{
+      const res=await fetch(`${FYNALHIRE_SUPABASE_URL}/auth/v1/token?grant_type=password`,{
+        method:"POST",
+        headers:{
+          "Content-Type":"application/json",
+          "apikey":FYNALHIRE_SUPABASE_KEY
+        },
+        body:JSON.stringify({email,password}),
+        signal:controller.signal
+      });
+
+      clearTimeout(timeout);
+      const data=await res.json();
+
+      if(!res.ok){
+        const msg=data.error_description || data.msg || data.error || "Login failed.";
+        throw new Error(msg);
+      }
+
+      if(!data.access_token || !data.refresh_token){
+        throw new Error("Login succeeded but no valid session token was returned.");
+      }
+
+      const {error:setErr}=await fynalhireClient.auth.setSession({
+        access_token:data.access_token,
+        refresh_token:data.refresh_token
+      });
+
+      if(setErr) throw setErr;
+      return true;
+    }catch(e){
+      clearTimeout(timeout);
+      throw e;
+    }
+  }
 
   try{
-    const {data,error}=await fynalhireClient.auth.signInWithPassword({email,password});
+    let loggedIn=false;
 
-    if(error){
-      showAuthStatus("Login failed: "+error.message+"<br><button type='button' style='margin-top:8px;background:transparent;border:none;color:#2563eb;font-weight:800;cursor:pointer' onclick='showForgotPassword()'>Forgot password?</button>","error");
-      console.error("Supabase login error:",error);
+    try{
+      const jsLoginPromise=fynalhireClient.auth.signInWithPassword({email,password});
+      const timeoutPromise=new Promise((_,reject)=>setTimeout(()=>reject(new Error("Supabase JS login timeout")),12000));
+      const {data,error}=await Promise.race([jsLoginPromise,timeoutPromise]);
+
+      if(error) throw error;
+      if(data && data.session) loggedIn=true;
+    }catch(jsErr){
+      console.warn("Supabase JS login failed or timed out, trying direct auth fallback:",jsErr);
+      await directPasswordLogin();
+      loggedIn=true;
+    }
+
+    if(!loggedIn){
+      showAuthStatus("Login response received, but no session was created.","error");
       return;
     }
 
-    if(!data || !data.session){
-      showAuthStatus("Login response received, but no session was created. If email confirmation is enabled, please confirm your email first.","error");
-      return;
-    }
-
-    signedIn=true;
     showAuthStatus("Login successful.","success");
     closeAuth();
     await afterSuccessfulLogin();
 
   }catch(e){
-    showAuthStatus("Login error: "+e.message+"<br><br>If this happens from a downloaded file, deploy to Vercel and test on HTTPS.","error");
-    console.error(e);
+    showAuthStatus("Login failed: "+e.message+"<br><button type='button' style='margin-top:8px;background:transparent;border:none;color:#2563eb;font-weight:800;cursor:pointer' onclick='showForgotPassword()'>Forgot password?</button>","error");
+    console.error("Login final error:",e);
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent="Sign In";}
   }
 }
 
 async function loginWithGoogle(){
-  if(window.location.protocol==="file:"){
-    showAuthStatus("Google login needs the live HTTPS website. It will not work reliably from a downloaded local file.","error");
-    return;
-  }
+  selectedArea=selectedArea||"jobseeker";
+  localStorage.setItem("fh_area",selectedArea);
+
+  const redirectTo = FYNALHIRE_SITE_URL;
+  showAuthStatus("Redirecting to Google...");
+
   const {error}=await fynalhireClient.auth.signInWithOAuth({
     provider:"google",
-    options:{redirectTo:window.location.origin,queryParams:{access_type:"offline",prompt:"consent"}}
+    options:{
+      redirectTo:redirectTo,
+      queryParams:{access_type:"offline",prompt:"consent"}
+    }
   });
-  if(error){showAuthStatus("Google login failed: "+error.message,"error");}
+
+  if(error){
+    showAuthStatus("Google login failed: "+error.message,"error");
+  }
+}
+
+async function handleOAuthReturn(){
+  try{
+    const {data,error}=await fynalhireClient.auth.getSession();
+    if(error){
+      console.warn("OAuth session check error:",error);
+      return;
+    }
+    if(data && data.session){
+      signedIn=true;
+      await afterSuccessfulLogin();
+      if(window.history && window.location.hash){
+        window.history.replaceState({},document.title,window.location.pathname);
+      }
+    }
+  }catch(e){
+    console.warn("OAuth return handling failed:",e);
+  }
 }
 
 async function logoutUser(){
@@ -356,6 +434,7 @@ async function logoutUser(){
   stopIdleTimer();
   showPage("home");
   await refreshAuth();
+  await handleOAuthReturn();
 }
 
 async function afterSuccessfulLogin(){
