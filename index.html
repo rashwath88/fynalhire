@@ -98,6 +98,40 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
   font-weight:700;
   font-size:13px;
 }
+
+.plan-chip{
+  display:inline-block;
+  color:#fff;
+  background:rgba(37,99,235,.35);
+  border:1px solid rgba(191,219,254,.35);
+  border-radius:999px;
+  padding:8px 12px;
+  font-size:13px;
+  font-weight:900;
+}
+.account-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(230px,1fr));
+  gap:16px;
+  margin-top:24px;
+}
+.account-card{
+  background:#fff;
+  border:1.5px solid var(--border);
+  border-radius:18px;
+  padding:20px;
+}
+.account-card h3{margin-top:0}
+.account-value{
+  font-size:24px;
+  font-weight:900;
+  color:#2563eb;
+}
+.account-muted{
+  color:#64748b;
+  font-size:14px;
+  line-height:1.5;
+}
 </style>
 </head>
 <body>
@@ -109,7 +143,8 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
     <button type="button" class="nav-btn" onclick="showPage('about')">About</button>
     <button type="button" class="nav-btn" onclick="showPage('why')">Why Choose Us</button>
     <button type="button" class="nav-btn" onclick="showPage('legal')">Legal</button>
-    <span id="userChip" style="display:none;color:white;font-weight:800;font-size:13px"></span><button type="button" class="sign-btn" id="authTopBtn" onclick="handleAuthButton()">Sign In</button>
+    <button type="button" class="nav-btn" id="myAccountNav" style="display:none" onclick="showMyAccount()">My Account</button>
+    <span id="userChip" class="plan-chip" style="display:none"></span><button type="button" class="sign-btn" id="authTopBtn" onclick="handleAuthButton()">Sign In</button>
   </nav>
 </header>
 
@@ -121,7 +156,7 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
     <h1>Know exactly where you stand before you apply or shortlist</h1>
     <p>FynalHire analyzes recruiter psychology, hiring signals, leadership evidence, commercial impact and CV positioning to improve shortlist probability and help recruiters make faster, lower-risk hiring decisions.</p>
     <div class="hero-actions">
-      <button type="button" class="btn-primary" onclick="openUserTypeModal('scan')">Start Free Scan →</button>
+      <button type="button" class="btn-primary" onclick="openUserTypeModal('scan')">Start Scan →</button>
       <button type="button" class="btn-outline" onclick="openUserTypeModal('pricing')">Choose Your Plan</button>
     </div>
   </div>
@@ -155,6 +190,42 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
   </div>
 </section>
 
+
+
+<section id="page-account" class="page">
+  <div class="content">
+    <div class="section-head">
+      <h1>My Account</h1>
+      <p>View your account status, plan and scan balance.</p>
+    </div>
+    <div class="account-grid">
+      <div class="account-card">
+        <h3>Account</h3>
+        <div class="account-value" id="accountName">—</div>
+        <p class="account-muted" id="accountEmail">—</p>
+      </div>
+      <div class="account-card">
+        <h3>Current Plan</h3>
+        <div class="account-value" id="accountPlan">—</div>
+        <p class="account-muted" id="accountPlanNote">—</p>
+      </div>
+      <div class="account-card">
+        <h3>Free Scans</h3>
+        <div class="account-value" id="accountScans">—</div>
+        <p class="account-muted">Free Job Seekers get 3 scans/month. Recruiter Free users get 2 scans/month.</p>
+      </div>
+      <div class="account-card">
+        <h3>Plan Expiry</h3>
+        <div class="account-value" id="accountExpiry">—</div>
+        <p class="account-muted" id="accountExpiryNote">Paid plans renew monthly once Stripe is connected.</p>
+      </div>
+    </div>
+    <div style="margin-top:22px;display:flex;gap:12px;flex-wrap:wrap;justify-content:center">
+      <button type="button" class="btn-primary" onclick="enterArea(selectedArea)">Start Scan</button>
+      <button type="button" class="btn-outline" id="accountUpgradeBtn" onclick="showPricingFor(selectedArea)">Upgrade Plan</button>
+    </div>
+  </div>
+</section>
 
 <section id="page-dashboard" class="page">
   <div class="content">
@@ -276,7 +347,7 @@ async function loadUserProfile(){
 
   const {data,error}=await fynalhireClient
     .from("profiles")
-    .select("id,email,user_type,plan,subscription_status")
+    .select("id,email,user_type,plan,subscription_status,subscription_current_period_end,created_at")
     .eq("id",currentUser.id)
     .single();
 
@@ -354,6 +425,137 @@ async function routeAfterLogin(){
   pendingAction=null;
 }
 
+
+function getFirstNameFromUser(){
+  const meta=currentUser?.user_metadata || {};
+  const name=meta.full_name || meta.name || meta.first_name || "";
+  if(name && name.trim()) return name.trim().split(/\s+/)[0];
+  const email=currentUser?.email || currentProfile?.email || "";
+  if(email.includes("@")){
+    const local=email.split("@")[0];
+    const clean=local.split(/[._-]/).filter(Boolean)[0] || local;
+    return clean.charAt(0).toUpperCase()+clean.slice(1);
+  }
+  return "User";
+}
+
+function planLabel(plan){
+  const labels={
+    free:"Free",
+    growth:"Growth",
+    elite:"Elite",
+    rec_free:"Recruiter Free",
+    rec_premium:"Recruiter Premium"
+  };
+  return labels[plan] || "Free";
+}
+
+function isFreePlan(plan){
+  return plan==="free" || plan==="rec_free" || !plan;
+}
+
+function freeScanLimitForProfile(){
+  const plan=currentProfile?.plan || "free";
+  const type=currentProfile?.user_type || selectedArea || "jobseeker";
+  if(plan==="rec_free" || type==="recruiter") return 2;
+  if(plan==="free") return 3;
+  return 9999;
+}
+
+function monthKey(){
+  const d=new Date();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}`;
+}
+
+async function getScanUsage(){
+  if(!currentUser) await getCurrentUser();
+  if(!currentUser) return {used:0,limit:0,left:0};
+
+  const plan=currentProfile?.plan || "free";
+  const limit=freeScanLimitForProfile();
+
+  if(!isFreePlan(plan)){
+    return {used:0,limit:9999,left:9999};
+  }
+
+  try{
+    const {data,error}=await fynalhireClient
+      .from("usage_counters")
+      .select("scans_used")
+      .eq("user_id",currentUser.id)
+      .eq("month_key",monthKey())
+      .maybeSingle();
+
+    if(error){
+      console.warn("Usage fetch failed:",error);
+      return {used:0,limit,left:limit};
+    }
+
+    const used=data?.scans_used || 0;
+    return {used,limit,left:Math.max(limit-used,0)};
+  }catch(e){
+    console.warn("Usage exception:",e);
+    return {used:0,limit,left:limit};
+  }
+}
+
+async function updateTopUserChip(){
+  const chip=document.getElementById("userChip");
+  const accountNav=document.getElementById("myAccountNav");
+  if(!chip) return;
+
+  if(!signedIn || !currentUser){
+    chip.style.display="none";
+    if(accountNav) accountNav.style.display="none";
+    return;
+  }
+
+  if(!currentProfile) await loadUserProfile();
+
+  const first=getFirstNameFromUser();
+  const plan=planLabel(currentProfile?.plan || "free");
+  chip.textContent=`${first} - ${plan}`;
+  chip.style.display="inline-block";
+
+  if(accountNav) accountNav.style.display="inline-block";
+}
+
+async function showMyAccount(){
+  await getCurrentUser();
+  if(!currentUser){
+    openAuth();
+    return;
+  }
+
+  await loadUserProfile();
+  await updateTopUserChip();
+
+  const usage=await getScanUsage();
+  const plan=currentProfile?.plan || "free";
+  const type=currentProfile?.user_type || selectedArea || "jobseeker";
+  const created=currentUser?.created_at ? new Date(currentUser.created_at).toLocaleDateString() : "—";
+  const expiry=currentProfile?.subscription_current_period_end ? new Date(currentProfile.subscription_current_period_end).toLocaleDateString() : "Not applicable";
+
+  document.getElementById("accountName").textContent=getFirstNameFromUser();
+  document.getElementById("accountEmail").textContent=currentUser.email || "";
+  document.getElementById("accountPlan").textContent=planLabel(plan);
+  document.getElementById("accountPlanNote").textContent=`Account type: ${type==="recruiter" ? "Recruiter" : "Job Seeker"} · Created: ${created}`;
+
+  if(isFreePlan(plan)){
+    document.getElementById("accountScans").textContent=`${usage.left} left`;
+    document.getElementById("accountExpiry").textContent="Monthly reset";
+    document.getElementById("accountExpiryNote").textContent="Free scan allowance resets every month.";
+    document.getElementById("accountUpgradeBtn").style.display="inline-block";
+  }else{
+    document.getElementById("accountScans").textContent="Unlimited";
+    document.getElementById("accountExpiry").textContent=expiry;
+    document.getElementById("accountExpiryNote").textContent=currentProfile?.subscription_status==="expired" ? "Your plan has expired. Please renew." : "Your paid plan is active.";
+    document.getElementById("accountUpgradeBtn").style.display=plan==="elite" || plan==="rec_premium" ? "none" : "inline-block";
+  }
+
+  showPage("account");
+}
+
 function showPage(page){
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
   document.getElementById("page-"+page)?.classList.add("active");
@@ -390,6 +592,9 @@ async function openUserTypeModal(purpose){
       openRoleSetup();
       return;
     }
+    pendingAction="enter_area";
+    openAuth();
+    return;
   }
 
   document.getElementById("userTypeModal").style.display="flex";
@@ -428,16 +633,15 @@ async function refreshAuth(){
   try{
     const {data}=await fynalhireClient.auth.getSession();
     signedIn=!!data.session;
+    currentUser=data && data.session ? data.session.user : currentUser;
 
     const btn=document.getElementById("authTopBtn");
     const chip=document.getElementById("userChip");
 
     if(signedIn){
       btn.textContent="Sign Out";
-      if(chip){
-        chip.textContent=data.session.user.email || "Signed in";
-        chip.style.display="inline-block";
-      }
+      await loadUserProfile();
+      await updateTopUserChip();
       startIdleTimer();
     }else{
       btn.textContent="Sign In";
@@ -445,6 +649,8 @@ async function refreshAuth(){
         chip.textContent="";
         chip.style.display="none";
       }
+      const accountNav=document.getElementById("myAccountNav");
+      if(accountNav) accountNav.style.display="none";
       stopIdleTimer();
     }
   }catch(e){
@@ -850,6 +1056,7 @@ async function analyzeWithFynalHireAPI(event){
     }
 
     setDebug("Analysis completed.");
+    await loadUserProfile();
     renderLiveResult(data.result,data.usage);
 
   }catch(e){
@@ -872,16 +1079,40 @@ async function analyzeWithFynalHireAPI(event){
 function renderLiveResult(r,usage){
   const results=document.getElementById("results");
   results.style.display="block";
+
+  const plan=currentProfile?.plan || "free";
+  const type=currentProfile?.user_type || selectedArea || "jobseeker";
+  const free=isFreePlan(plan);
+
+  if(free){
+    results.innerHTML=`
+      <div class="score">${Number(r.overall_score||0).toFixed(1)}<span style="font-size:30px;color:#64748b">/10</span></div>
+      <p><strong>${esc(r.verdict||"Free scan completed.")}</strong></p>
+      <div class="limit-box">
+        <p>Your Free plan shows score only.</p>
+        <p>Upgrade to Growth or Elite to unlock keyword analysis, detailed gaps, recruiter-style feedback and improvement suggestions.</p>
+        <button type="button" class="btn-primary" onclick="showPricingFor('${type}')">Upgrade Plan</button>
+      </div>
+      ${usage?`<p class="fh-small-note">Monthly usage: ${usage.scans_used} / ${usage.limit===9999?"fair-use unlimited":usage.limit}</p>`:""}
+      <p class="fh-small-note">${esc(r.disclaimer||"FynalHire provides AI-assisted analysis only and does not guarantee employment outcomes.")}</p>
+    `;
+    updateTopUserChip();
+    results.scrollIntoView({behavior:"smooth"});
+    return;
+  }
+
   const locked=Array.isArray(r.locked_sections)?`<div class="insight warning"><h4>🔒 Locked Sections</h4><ul class="fh-result-list">${r.locked_sections.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>`:"";
   results.innerHTML=`<div class="score">${Number(r.overall_score||0).toFixed(1)}<span style="font-size:30px;color:#64748b">/10</span></div><p><strong>${esc(r.verdict||"")}</strong></p><p style="color:#334155;line-height:1.75">${esc(r.summary||"")}</p><div class="insights">${listCard("🧭 What The JD Actually Wants™",r.jd_really_wants)}${listCard("✅ What Your CV Already Proves Well™",r.cv_proves_well)}${listCard("⚠️ What Is Missing Or Weak™",r.missing_or_weak,"warning")}${listCard("➕ What To Add To Your CV™",r.what_to_add)}${textCard("🧠 Recruiter Mind Simulation™",r.recruiter_mind_simulation,"purple")}${textCard("⚡ 8 Second Recruiter Test™",r.eight_second_test&&r.eight_second_test.finding,"warning")}${textCard("💼 Commercial Impact Analysis™",r.commercial_impact)}${textCard("👔 Executive Presence™",r.executive_presence&&r.executive_presence.comment)}${textCard("🪞 Human Tone Analysis™",r.human_tone_analysis,"warning")}${listCard("🚩 Why You May NOT Be Shortlisted™",r.why_not_shortlisted,"warning")}${listCard("🔑 Keywords Found",r.keywords_found)}${listCard("❌ Keywords Missing",r.keywords_missing,"warning")}${listCard("⚠️ Recruiter Risk Flags",r.risk_flags,"warning")}${locked}</div><p class="fh-small-note">${esc(r.disclaimer||"FynalHire provides AI-assisted analysis only and does not guarantee employment outcomes.")}</p>${usage?`<p class="fh-small-note">Monthly usage: ${usage.scans_used} / ${usage.limit===9999?"fair-use unlimited":usage.limit}</p>`:""}`;
+  updateTopUserChip();
   results.scrollIntoView({behavior:"smooth"});
 }
+
 function listCard(title,arr,cls=""){arr=Array.isArray(arr)?arr:[];if(!arr.length)return "";return `<div class="insight ${cls}"><h4>${title}</h4><ul class="fh-result-list">${arr.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>`;}
 function textCard(title,text,cls=""){if(!text)return "";return `<div class="insight ${cls}"><h4>${title}</h4><p>${esc(text||"")}</p></div>`;}
 function esc(str){return String(str||"").replace(/[&<>"']/g,s=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[s]));}
 
 window.addEventListener("load",async()=>{
-  console.log("FynalHire analyze session-fallback build loaded.");
+  console.log("FynalHire account-plan build loaded.");
   await refreshAuth();
 });
 fynalhireClient.auth.onAuthStateChange(()=>refreshAuth());
