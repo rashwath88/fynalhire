@@ -1056,8 +1056,9 @@ async function analyzeWithFynalHireAPI(event){
     }
 
     setDebug("Analysis completed.");
-    await loadUserProfile();
     renderLiveResult(data.result,data.usage);
+    // Refresh account chip after rendering, without blocking result display.
+    loadUserProfile().then(()=>updateTopUserChip()).catch(e=>console.warn("Post-analysis profile refresh failed:",e));
 
   }catch(e){
     const msg=e.name==="AbortError" ? "Analysis timed out after 90 seconds." : "Analysis failed: "+e.message;
@@ -1069,7 +1070,7 @@ async function analyzeWithFynalHireAPI(event){
     console.error("Analyze failed:",e);
   }finally{
     if(btn){
-      btn.textContent=old;
+      btn.textContent=old || "Analyze CV";
       btn.disabled=false;
     }
   }
@@ -1112,7 +1113,7 @@ function textCard(title,text,cls=""){if(!text)return "";return `<div class="insi
 function esc(str){return String(str||"").replace(/[&<>"']/g,s=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[s]));}
 
 window.addEventListener("load",async()=>{
-  console.log("FynalHire account-plan build loaded.");
+  console.log("FynalHire account-plan nonblocking analysis build loaded.");
   await refreshAuth();
 });
 fynalhireClient.auth.onAuthStateChange(()=>refreshAuth());
