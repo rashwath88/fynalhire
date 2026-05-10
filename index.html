@@ -132,6 +132,32 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
   font-size:14px;
   line-height:1.5;
 }
+
+.jd-link-box{
+  background:#f8fbff;
+  border:1.5px solid var(--border);
+  border-radius:14px;
+  padding:14px;
+  margin-bottom:12px;
+}
+.jd-link-row{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.jd-link-row input{
+  flex:1;
+  min-width:240px;
+  padding:12px 14px;
+  border:1.5px solid #cbd5e1;
+  border-radius:10px;
+}
+.jd-link-note{
+  margin-top:8px;
+  color:#64748b;
+  font-size:12px;
+  line-height:1.5;
+}
 </style>
 </head>
 <body>
@@ -253,7 +279,17 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
     <div class="section-head"><h1 id="appTitle">FynalHire Scanner</h1><p id="appSub">Upload or paste your CV and compare it with a job description.</p></div>
     <div class="scan-box">
       <div class="scan-grid">
-        <div><h3>Job Description</h3><textarea id="jdText" placeholder="Paste Job Description here..."></textarea></div>
+        <div>
+  <h3>Job Description</h3>
+  <div class="jd-link-box">
+    <div class="jd-link-row">
+      <input id="jdUrl" type="url" placeholder="Paste public JD link here — company career page, Indeed, job board, etc.">
+      <button type="button" class="btn-outline" id="extractJdBtn" onclick="extractJDFromUrl(event)">Extract JD</button>
+    </div>
+    <div class="jd-link-note" id="jdUrlNote">LinkedIn and some job boards may block automatic extraction. If extraction fails, paste the JD manually below.</div>
+  </div>
+  <textarea id="jdText" placeholder="Paste Job Description here..."></textarea>
+</div>
         <div><h3 id="cvHeading">CV / Resume</h3><div class="upload"><input type="file" id="cvFile" accept=".txt,.pdf,.doc,.docx" onchange="handleCVUpload(event)"><div id="uploadText">📄 Upload CV — PDF / Word / TXT</div><small id="uploadNote">TXT can be read now. PDF/Word extraction will be completed through backend parser.</small></div><textarea id="cvText" placeholder="Or paste CV text here..."></textarea></div>
       </div>
       <button type="button" id="analyzeBtn" class="btn-primary" style="margin-top:20px;width:100%" onclick="analyzeWithFynalHireAPI(event)">Analyze CV</button><div id="analyzeDebug" class="fh-debug-line"></div>
@@ -724,7 +760,6 @@ async function loginUser(){
       return;
     }
 
-    localStorage.setItem('fh_access_token', data.access_token);
     const {error:setErr}=await fynalhireClient.auth.setSession({
       access_token:data.access_token,
       refresh_token:data.refresh_token
@@ -795,6 +830,7 @@ async function handleOAuthReturn(){
 
 
 async function logoutUser(){
+  if(typeof clearLegacyStoredTokens === 'function') clearLegacyStoredTokens();
   await fynalhireClient.auth.signOut();
   signedIn=false;
   stopIdleTimer();
@@ -924,45 +960,115 @@ function handleCVUpload(event){
 }
 
 
-function getStoredSupabaseAccessToken(){
+function clearLegacyStoredTokens(){
   try{
-    const direct=localStorage.getItem("fh_access_token");
-    if(direct) return direct;
-    // Supabase stores auth sessions under keys like sb-<project-ref>-auth-token
-    for(let i=0;i<localStorage.length;i++){
-      const key=localStorage.key(i);
-      if(!key) continue;
-      if(key.includes("auth-token") || key.includes("supabase")){
-        const raw=localStorage.getItem(key);
-        if(!raw) continue;
-        try{
-          const parsed=JSON.parse(raw);
-          if(parsed && parsed.access_token) return parsed.access_token;
-          if(parsed && parsed.currentSession && parsed.currentSession.access_token) return parsed.currentSession.access_token;
-        }catch(_){}
-      }
-    }
+    localStorage.removeItem("fh_access_token");
   }catch(e){
-    console.warn("Could not read stored auth token:",e);
+    console.warn("Could not clear legacy token:", e);
   }
-  return null;
 }
 
 async function getAccessTokenFast(){
-  // First try browser storage immediately. This avoids hanging on getSession().
-  const stored=getStoredSupabaseAccessToken();
-  if(stored) return stored;
+  // Always use Supabase's current session. Old manually stored tokens can expire and cause Invalid JWT.
+  clearLegacyStoredTokens();
 
-  // Then try Supabase getSession with a short timeout.
-  const timeoutPromise=new Promise((_,reject)=>setTimeout(()=>reject(new Error("Session lookup timeout")),5000));
+  const timeoutPromise=new Promise((_,reject)=>setTimeout(()=>reject(new Error("Session lookup timeout")),8000));
   const sessionPromise=fynalhireClient.auth.getSession();
   const {data,error}=await Promise.race([sessionPromise,timeoutPromise]);
 
   if(error) throw error;
-  if(data && data.session && data.session.access_token) return data.session.access_token;
+
+  if(data && data.session && data.session.access_token){
+    return data.session.access_token;
+  }
 
   return null;
 }
+
+
+async function extractJDFromUrl(event){
+  const url=document.getElementById("jdUrl").value.trim();
+  const btn=event?.target || document.getElementById("extractJdBtn");
+  const note=document.getElementById("jdUrlNote");
+  const old=btn?.textContent || "Extract JD";
+
+  if(!url){
+    alert("Please paste a job description link first.");
+    return;
+  }
+
+  let accessToken=null;
+  try{
+    accessToken=await getAccessTokenFast();
+  }catch(e){
+    console.warn("Session check failed:",e);
+  }
+
+  if(!accessToken){
+    openAuth();
+    return;
+  }
+
+  if(btn){
+    btn.disabled=true;
+    btn.textContent="Extracting...";
+  }
+  if(note){
+    note.textContent="Trying to read the job description from the link...";
+    note.style.color="#64748b";
+  }
+
+  try{
+    const res=await fetch(`${FYNALHIRE_SUPABASE_URL}/functions/v1/extract-jd`,{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "Authorization":`Bearer ${accessToken}`,
+        "apikey":FYNALHIRE_SUPABASE_KEY
+      },
+      body:JSON.stringify({url})
+    });
+
+    let data={};
+    try{data=await res.json();}catch(_){data={error:"INVALID_RESPONSE",message:"Could not read response."};}
+
+    if(!res.ok){
+      const msg=data.message || data.error || "Could not extract this job page.";
+      if(note){
+        note.textContent=msg+" Please paste the JD manually below.";
+        note.style.color="#991b1b";
+      }
+      return;
+    }
+
+    const jd=data.jd_text || data.text || "";
+    if(!jd || jd.length<80){
+      if(note){
+        note.textContent="The page was reachable, but the job description could not be extracted clearly. Please paste the JD manually below.";
+        note.style.color="#991b1b";
+      }
+      return;
+    }
+
+    document.getElementById("jdText").value=jd;
+    if(note){
+      note.textContent=`JD extracted${data.title ? " for: "+data.title : ""}. Please review it before analysis.`;
+      note.style.color="#166534";
+    }
+
+  }catch(e){
+    if(note){
+      note.textContent="Extraction failed: "+e.message+". Please paste the JD manually below.";
+      note.style.color="#991b1b";
+    }
+  }finally{
+    if(btn){
+      btn.disabled=false;
+      btn.textContent=old;
+    }
+  }
+}
+
 
 async function analyzeWithFynalHireAPI(event){
   console.log("Analyze button clicked");
@@ -1113,7 +1219,7 @@ function textCard(title,text,cls=""){if(!text)return "";return `<div class="insi
 function esc(str){return String(str||"").replace(/[&<>"']/g,s=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[s]));}
 
 window.addEventListener("load",async()=>{
-  console.log("FynalHire account-plan nonblocking analysis build loaded.");
+  console.log("FynalHire JD-link extraction build loaded.");
   await refreshAuth();
 });
 fynalhireClient.auth.onAuthStateChange(()=>refreshAuth());
