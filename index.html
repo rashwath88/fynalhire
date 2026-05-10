@@ -170,6 +170,7 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
     <button type="button" class="nav-btn" onclick="showPage('why')">Why Choose Us</button>
     <button type="button" class="nav-btn" onclick="showPage('legal')">Legal</button>
     <button type="button" class="nav-btn" id="myAccountNav" style="display:none" onclick="showMyAccount()">My Account</button>
+    <button type="button" class="nav-btn" onclick="showPage('contact')">Contact Us</button>
     <span id="userChip" class="plan-chip" style="display:none"></span><button type="button" class="sign-btn" id="authTopBtn" onclick="handleAuthButton()">Sign In</button>
   </nav>
 </header>
@@ -301,6 +302,21 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
 
 <section id="page-about" class="page"><div class="content"><div class="section-head"><h1>About FynalHire</h1><p>Built to remove guesswork from career and hiring decisions.</p></div><div class="card"><p>FynalHire was created for people who are tired of applying blindly and recruiters who are tired of screening manually. We do not flatter CVs. We stress test them with recruiter-style intelligence.</p></div></div></section>
 <section id="page-why" class="page"><div class="content"><div class="section-head"><h1>Why Choose Us</h1><p>We combine recruiter psychology, hiring signals and evidence-based CV analysis.</p></div><section class="selector"><div class="card"><h2>🧠 Recruiter Mind Simulation™</h2><p>See what a recruiter may think before they shortlist or reject.</p></div><div class="card"><h2>⚡ 8 Second Test™</h2><p>Understand whether your CV survives fast first-glance screening.</p></div></section></div></section>
+
+<section id="page-contact" class="page">
+  <div class="content">
+    <div class="section-head">
+      <h1>Contact Us</h1>
+      <p>Need help with technical issues, pricing, billing, plan upgrades or account support?</p>
+    </div>
+    <div class="contact-card">
+      <h2>FynalHire Support</h2>
+      <p style="color:#334155;line-height:1.7">Customers can reach us for technical support, pricing-related questions, billing support, plan upgrade issues, account help, or general product queries.</p>
+      <a class="contact-email" href="mailto:info@fynalhire.com">info@fynalhire.com</a>
+    </div>
+  </div>
+</section>
+
 <section id="page-legal" class="page"><div class="content"><div class="section-head"><h1>Legal</h1><p>FynalHire provides AI-assisted analysis only. It does not guarantee interviews, selection or employment outcomes.</p></div></div></section>
 
 <footer><h3>FynalHire</h3><p>Hiring Intelligence Platform for job seekers and recruiters.</p><p>FynalHire provides probabilistic AI-assisted hiring analysis and recruiter-style evaluation. Results do not guarantee interviews, hiring decisions or employment outcomes.</p></footer>
@@ -449,6 +465,7 @@ async function routeAfterLogin(){
 
   selectedArea=profile.user_type;
   localStorage.setItem("fh_area",selectedArea);
+  await updateTopUserChip();
 
   if(pendingAction==="select_plan" && pendingPlan){
     completePlanSelection(pendingPlan,selectedArea);
@@ -670,10 +687,8 @@ async function refreshAuth(){
     const {data}=await fynalhireClient.auth.getSession();
     signedIn=!!data.session;
     currentUser=data && data.session ? data.session.user : currentUser;
-
     const btn=document.getElementById("authTopBtn");
     const chip=document.getElementById("userChip");
-
     if(signedIn){
       btn.textContent="Sign Out";
       await loadUserProfile();
@@ -681,17 +696,12 @@ async function refreshAuth(){
       startIdleTimer();
     }else{
       btn.textContent="Sign In";
-      if(chip){
-        chip.textContent="";
-        chip.style.display="none";
-      }
+      if(chip){ chip.textContent=""; chip.style.display="none"; }
       const accountNav=document.getElementById("myAccountNav");
       if(accountNav) accountNav.style.display="none";
       stopIdleTimer();
     }
-  }catch(e){
-    console.error("refreshAuth failed",e);
-  }
+  }catch(e){ console.error("refreshAuth failed",e); }
 }
 
 async function signupUser(){
@@ -1219,7 +1229,7 @@ function textCard(title,text,cls=""){if(!text)return "";return `<div class="insi
 function esc(str){return String(str||"").replace(/[&<>"']/g,s=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[s]));}
 
 window.addEventListener("load",async()=>{
-  console.log("FynalHire JD-link extraction build loaded.");
+  console.log("FynalHire my-account contact build loaded.");
   await refreshAuth();
 });
 fynalhireClient.auth.onAuthStateChange(()=>refreshAuth());
