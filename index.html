@@ -518,6 +518,7 @@ async function loginUser(){
       return;
     }
 
+    localStorage.setItem('fh_access_token', data.access_token);
     const {error:setErr}=await fynalhireClient.auth.setSession({
       access_token:data.access_token,
       refresh_token:data.refresh_token
@@ -716,6 +717,47 @@ function handleCVUpload(event){
   }
 }
 
+
+function getStoredSupabaseAccessToken(){
+  try{
+    const direct=localStorage.getItem("fh_access_token");
+    if(direct) return direct;
+    // Supabase stores auth sessions under keys like sb-<project-ref>-auth-token
+    for(let i=0;i<localStorage.length;i++){
+      const key=localStorage.key(i);
+      if(!key) continue;
+      if(key.includes("auth-token") || key.includes("supabase")){
+        const raw=localStorage.getItem(key);
+        if(!raw) continue;
+        try{
+          const parsed=JSON.parse(raw);
+          if(parsed && parsed.access_token) return parsed.access_token;
+          if(parsed && parsed.currentSession && parsed.currentSession.access_token) return parsed.currentSession.access_token;
+        }catch(_){}
+      }
+    }
+  }catch(e){
+    console.warn("Could not read stored auth token:",e);
+  }
+  return null;
+}
+
+async function getAccessTokenFast(){
+  // First try browser storage immediately. This avoids hanging on getSession().
+  const stored=getStoredSupabaseAccessToken();
+  if(stored) return stored;
+
+  // Then try Supabase getSession with a short timeout.
+  const timeoutPromise=new Promise((_,reject)=>setTimeout(()=>reject(new Error("Session lookup timeout")),5000));
+  const sessionPromise=fynalhireClient.auth.getSession();
+  const {data,error}=await Promise.race([sessionPromise,timeoutPromise]);
+
+  if(error) throw error;
+  if(data && data.session && data.session.access_token) return data.session.access_token;
+
+  return null;
+}
+
 async function analyzeWithFynalHireAPI(event){
   console.log("Analyze button clicked");
   resetIdle();
@@ -739,14 +781,10 @@ async function analyzeWithFynalHireAPI(event){
   try{
     setDebug("Preparing analysis...");
 
-    const {data:sessionData,error:sessionError}=await fynalhireClient.auth.getSession();
+    setDebug("Checking secure login session...");
+    const accessToken=await getAccessTokenFast();
 
-    if(sessionError){
-      setDebug("Session error: "+sessionError.message,"error");
-      return;
-    }
-
-    if(!sessionData || !sessionData.session){
+    if(!accessToken){
       setDebug("Please sign in before scanning.","error");
       openAuth();
       return;
@@ -779,7 +817,7 @@ async function analyzeWithFynalHireAPI(event){
       method:"POST",
       headers:{
         "Content-Type":"application/json",
-        "Authorization":`Bearer ${sessionData.session.access_token}`,
+        "Authorization":`Bearer ${accessToken}`,
         "apikey":FYNALHIRE_SUPABASE_KEY
       },
       body:JSON.stringify({
@@ -843,7 +881,7 @@ function textCard(title,text,cls=""){if(!text)return "";return `<div class="insi
 function esc(str){return String(str||"").replace(/[&<>"']/g,s=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[s]));}
 
 window.addEventListener("load",async()=>{
-  console.log("FynalHire analyze-debug build loaded.");
+  console.log("FynalHire analyze session-fallback build loaded.");
   await refreshAuth();
 });
 fynalhireClient.auth.onAuthStateChange(()=>refreshAuth());
