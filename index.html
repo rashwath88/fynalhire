@@ -59,6 +59,23 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
   line-height:1.6;
 }
 .limit-box p{margin:0 0 12px}
+
+.analyzing-dots::after{
+  content:"";
+  animation:dots 1.2s steps(4,end) infinite;
+}
+@keyframes dots{
+  0%{content:""}
+  25%{content:"."}
+  50%{content:".."}
+  75%{content:"..."}
+  100%{content:""}
+}
+.role-modal-note{
+  color:#334155;
+  line-height:1.6;
+  margin-bottom:18px;
+}
 </style>
 </head>
 <body>
@@ -159,6 +176,16 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
 
 <footer><h3>FynalHire</h3><p>Hiring Intelligence Platform for job seekers and recruiters.</p><p>FynalHire provides probabilistic AI-assisted hiring analysis and recruiter-style evaluation. Results do not guarantee interviews, hiring decisions or employment outcomes.</p></footer>
 
+
+<div id="roleSetupModal" class="auth-modal-overlay">
+  <div class="auth-modal">
+    <h2>Choose Your Account Type</h2>
+    <p class="role-modal-note">This helps us show the right scanner, limits and pricing. You can upgrade plans later.</p>
+    <button type="button" class="btn-primary" onclick="saveUserRole('jobseeker')" style="width:100%;margin-bottom:10px">👤 I am a Job Seeker</button>
+    <button type="button" class="btn-outline" onclick="saveUserRole('recruiter')" style="width:100%">🏢 I am a Recruiter</button>
+  </div>
+</div>
+
 <div id="userTypeModal" class="auth-modal-overlay">
   <div class="auth-modal">
     <button type="button" class="auth-close" onclick="closeUserTypeModal()">Close</button>
@@ -196,12 +223,114 @@ let pendingPlan=null;
 let signedIn=false;
 let idleSeconds=900;
 let idleInterval=null;
+let currentUser=null;
+let currentProfile=null;
 
 const STRIPE_LINKS={
   growth:"PASTE_STRIPE_GROWTH_CHECKOUT_URL_HERE",
   elite:"PASTE_STRIPE_ELITE_CHECKOUT_URL_HERE",
   rec_premium:"PASTE_STRIPE_RECRUITER_PREMIUM_CHECKOUT_URL_HERE"
 };
+
+
+function openRoleSetup(){
+  const modal=document.getElementById("roleSetupModal");
+  if(modal) modal.style.display="flex";
+}
+function closeRoleSetup(){
+  const modal=document.getElementById("roleSetupModal");
+  if(modal) modal.style.display="none";
+}
+
+async function getCurrentUser(){
+  const {data}=await fynalhireClient.auth.getSession();
+  currentUser=data && data.session ? data.session.user : null;
+  return currentUser;
+}
+
+async function loadUserProfile(){
+  await getCurrentUser();
+  if(!currentUser){currentProfile=null;return null;}
+
+  const {data,error}=await fynalhireClient
+    .from("profiles")
+    .select("id,email,user_type,plan,subscription_status")
+    .eq("id",currentUser.id)
+    .single();
+
+  if(error || !data){
+    console.warn("Profile missing or inaccessible:",error);
+    currentProfile=null;
+    return null;
+  }
+
+  currentProfile=data;
+  selectedArea=data.user_type || selectedArea || "jobseeker";
+  localStorage.setItem("fh_area",selectedArea);
+  return currentProfile;
+}
+
+async function saveUserRole(type){
+  await getCurrentUser();
+  if(!currentUser){
+    closeRoleSetup();
+    openAuth();
+    return;
+  }
+
+  selectedArea=type;
+  localStorage.setItem("fh_area",type);
+
+  const plan=type==="recruiter" ? "rec_free" : "free";
+
+  try{
+    const {error}=await fynalhireClient
+      .from("profiles")
+      .upsert({
+        id:currentUser.id,
+        email:currentUser.email,
+        user_type:type,
+        plan:plan
+      }, {onConflict:"id"});
+
+    if(error){
+      alert("Could not save account type: "+error.message);
+      console.error(error);
+      return;
+    }
+
+    currentProfile={id:currentUser.id,email:currentUser.email,user_type:type,plan:plan};
+    closeRoleSetup();
+    enterArea(type);
+
+  }catch(e){
+    alert("Could not save account type: "+e.message);
+    console.error(e);
+  }
+}
+
+async function routeAfterLogin(){
+  await refreshAuth();
+  const profile=await loadUserProfile();
+
+  if(!profile || !profile.user_type){
+    openRoleSetup();
+    return;
+  }
+
+  selectedArea=profile.user_type;
+  localStorage.setItem("fh_area",selectedArea);
+
+  if(pendingAction==="select_plan" && pendingPlan){
+    completePlanSelection(pendingPlan,selectedArea);
+  }else if(pendingAction==="enter_area"){
+    enterArea(selectedArea);
+  }else{
+    enterArea(selectedArea);
+  }
+
+  pendingAction=null;
+}
 
 function showPage(page){
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
@@ -225,20 +354,39 @@ function openAuth(){
   document.getElementById("authModal").style.display="flex";
 }
 function closeAuth(){document.getElementById("authModal").style.display="none";}
-function openUserTypeModal(purpose){userTypePurpose=purpose||"scan";document.getElementById("userTypeModal").style.display="flex";}
+async function openUserTypeModal(purpose){
+  userTypePurpose=purpose||"scan";
+
+  if(userTypePurpose==="scan"){
+    await getCurrentUser();
+    if(currentUser){
+      const profile=await loadUserProfile();
+      if(profile && profile.user_type){
+        enterArea(profile.user_type);
+        return;
+      }
+      openRoleSetup();
+      return;
+    }
+  }
+
+  document.getElementById("userTypeModal").style.display="flex";
+}
+
 function closeUserTypeModal(){document.getElementById("userTypeModal").style.display="none";}
 
 function chooseUserType(type){
   selectedArea=type;
   localStorage.setItem("fh_area",type);
+  closeUserTypeModal();
 
   if(userTypePurpose==="pricing"){
-    closeUserTypeModal();
     showPricingFor(type);
   }else{
     startAreaFlow(type);
   }
 }
+
 function showPricingFor(type){
   selectedArea=type;
   localStorage.setItem("fh_area",type);
@@ -406,7 +554,7 @@ async function handleOAuthReturn(){
     }
     if(data && data.session){
       signedIn=true;
-      await afterSuccessfulLogin();
+      await routeAfterLogin();
       if(window.history && window.location.hash){
         window.history.replaceState({},document.title,window.location.pathname);
       }
@@ -415,6 +563,7 @@ async function handleOAuthReturn(){
     console.warn("OAuth return handling failed:",e);
   }
 }
+
 
 async function logoutUser(){
   await fynalhireClient.auth.signOut();
@@ -426,17 +575,7 @@ async function logoutUser(){
 }
 
 async function afterSuccessfulLogin(){
-  await refreshAuth();
-
-  if(pendingAction==="enter_area"){
-    enterArea(selectedArea);
-  }else if(pendingAction==="select_plan" && pendingPlan){
-    completePlanSelection(pendingPlan,selectedArea);
-  }else{
-    showPage("dashboard");
-  }
-
-  pendingAction=null;
+  await routeAfterLogin();
 }
 
 async function requireLogin(area){
@@ -457,25 +596,25 @@ async function requireLogin(area){
   }
 }
 async function startAreaFlow(type){
-  selectedArea=type;
-  localStorage.setItem("fh_area",type);
-  pendingAction="enter_area";
+  await getCurrentUser();
 
-  // Simpler and more reliable flow:
-  // If already signed in -> enter area
-  // Otherwise -> immediately open auth modal
-
-  if(signedIn){
-    enterArea(type);
+  if(currentUser){
+    const profile=await loadUserProfile();
+    if(profile && profile.user_type){
+      selectedArea=profile.user_type;
+      enterArea(selectedArea);
+      return;
+    }
+    openRoleSetup();
     return;
   }
 
-  closeUserTypeModal();
-
-  setTimeout(()=>{
-    openAuth();
-  },120);
+  selectedArea=type;
+  localStorage.setItem("fh_area",type);
+  pendingAction="enter_area";
+  openAuth();
 }
+
 function enterArea(area){
   if(!signedIn){
     pendingAction="enter_area";
@@ -557,40 +696,84 @@ function handleCVUpload(event){
 
 async function analyzeWithFynalHireAPI(event){
   resetIdle();
+
   const {data:sessionData}=await fynalhireClient.auth.getSession();
-  if(!sessionData.session){openAuth();return;}
+  if(!sessionData.session){openAuth();return}
+
   const jd=document.getElementById("jdText").value.trim();
   const cv=document.getElementById("cvText").value.trim();
-  if(!jd||!cv){alert("Please paste both Job Description and CV text.");return;}
-  const btn=event?.target,old=btn?.textContent;
-  if(btn){btn.textContent="Analyzing...";btn.disabled=true;}
-  showAnalysisStatus("Step 1/3: Sending request securely to FynalHire backend...");
+
+  if(!jd||!cv){
+    alert("Please paste both Job Description and CV text.");
+    return;
+  }
+
+  const btn=event?.target;
+  const old=btn?.textContent || "Analyze CV";
+  const results=document.getElementById("results");
+
+  if(btn){
+    btn.innerHTML='<span class="analyzing-dots">Analyzing</span>';
+    btn.disabled=true;
+  }
+
+  results.style.display="block";
+  results.innerHTML=`<div class="insight"><h4><span class="analyzing-dots">Analyzing your CV</span></h4><p>FynalHire is comparing the CV with the job description and preparing recruiter-style feedback.</p></div>`;
+  results.scrollIntoView({behavior:"smooth"});
+
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),90000);
+
   try{
-    setTimeout(()=>showAnalysisStatus("Step 2/3: Recruiter-style analysis is running. This can take 20–60 seconds..."),2500);
     const res=await fetch(`${FYNALHIRE_SUPABASE_URL}/functions/v1/analyze-cv`,{
       method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":`Bearer ${sessionData.session.access_token}`},
-      body:JSON.stringify({jd_text:jd,cv_text:cv,audience:selectedArea,region:Intl.DateTimeFormat().resolvedOptions().timeZone||"global"}),
+      headers:{
+        "Content-Type":"application/json",
+        "Authorization":`Bearer ${sessionData.session.access_token}`,
+        "apikey":FYNALHIRE_SUPABASE_KEY
+      },
+      body:JSON.stringify({
+        jd_text:jd,
+        cv_text:cv,
+        audience:selectedArea,
+        region:Intl.DateTimeFormat().resolvedOptions().timeZone||"global"
+      }),
       signal:controller.signal
     });
+
     clearTimeout(timeout);
-    const data=await res.json();
+
+    let data={};
+    try{data=await res.json();}catch(e){data={error:"INVALID_RESPONSE",message:"Backend returned an invalid response."};}
+
     if(!res.ok){
-      showAnalysisStatus("Backend error: "+(data.message||data.error||"Analysis failed."),"error");
-      console.error(data);
+      if(data.error==="SCAN_LIMIT_REACHED"){
+        results.innerHTML=`
+          <div class="limit-box">
+            <p>You have zero free scans left for this month.</p>
+            <p>Please buy the plan that suits your requirement to continue.</p>
+            <button type="button" class="btn-primary" onclick="showPricingFor(selectedArea)">View Plans</button>
+          </div>
+        `;
+      }else{
+        results.innerHTML=`<div class="limit-box"><p>Analysis failed: ${esc(data.message||data.error||"Unknown error")}</p><p>Please try again. If this continues, check Supabase Edge Function logs.</p></div>`;
+      }
       return;
     }
-    showAnalysisStatus("Step 3/3: Analysis completed.","success");
+
     renderLiveResult(data.result,data.usage);
+
   }catch(e){
     clearTimeout(timeout);
-    showAnalysisStatus(e.name==="AbortError"?"Request timed out after 90 seconds. Check Supabase Edge Function logs.":"Live analysis failed: "+e.message,"error");
+    results.innerHTML=`<div class="limit-box"><p>${e.name==="AbortError" ? "Analysis timed out after 90 seconds." : "Analysis failed: "+esc(e.message)}</p><p>Please try again.</p></div>`;
   }finally{
-    if(btn){btn.textContent=old;btn.disabled=false;}
+    if(btn){
+      btn.textContent=old;
+      btn.disabled=false;
+    }
   }
 }
+
 
 function renderLiveResult(r,usage){
   const results=document.getElementById("results");
