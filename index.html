@@ -5,6 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>FynalHire — Hiring Intelligence Platform</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2">console.log("FynalHire direct API auth version loaded.");
+
+window.addEventListener("DOMContentLoaded",()=>{
+  const btn=document.getElementById("analyzeBtn");
+  if(btn){
+    btn.addEventListener("click",()=>{
+      console.log("Analyze button DOM listener fired");
+    });
+  }
+});
+
 </script>
 <style>
 :root{
@@ -75,6 +85,18 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
   color:#334155;
   line-height:1.6;
   margin-bottom:18px;
+}
+
+.fh-debug-line{
+  display:none;
+  margin-top:12px;
+  padding:10px 12px;
+  border-radius:10px;
+  background:#eff6ff;
+  border:1px solid #bfdbfe;
+  color:#1e3a8a;
+  font-weight:700;
+  font-size:13px;
 }
 </style>
 </head>
@@ -163,7 +185,7 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
         <div><h3>Job Description</h3><textarea id="jdText" placeholder="Paste Job Description here..."></textarea></div>
         <div><h3 id="cvHeading">CV / Resume</h3><div class="upload"><input type="file" id="cvFile" accept=".txt,.pdf,.doc,.docx" onchange="handleCVUpload(event)"><div id="uploadText">📄 Upload CV — PDF / Word / TXT</div><small id="uploadNote">TXT can be read now. PDF/Word extraction will be completed through backend parser.</small></div><textarea id="cvText" placeholder="Or paste CV text here..."></textarea></div>
       </div>
-      <button type="button" class="btn-primary" style="margin-top:20px;width:100%" onclick="analyzeWithFynalHireAPI(event)">Analyze CV</button>
+      <button type="button" id="analyzeBtn" class="btn-primary" style="margin-top:20px;width:100%" onclick="analyzeWithFynalHireAPI(event)">Analyze CV</button><div id="analyzeDebug" class="fh-debug-line"></div>
       <div class="status" id="analysisStatus"></div>
       <div class="results" id="results"></div>
     </div>
@@ -695,36 +717,64 @@ function handleCVUpload(event){
 }
 
 async function analyzeWithFynalHireAPI(event){
+  console.log("Analyze button clicked");
   resetIdle();
 
-  const {data:sessionData}=await fynalhireClient.auth.getSession();
-  if(!sessionData.session){openAuth();return}
-
-  const jd=document.getElementById("jdText").value.trim();
-  const cv=document.getElementById("cvText").value.trim();
-
-  if(!jd||!cv){
-    alert("Please paste both Job Description and CV text.");
-    return;
-  }
-
-  const btn=event?.target;
-  const old=btn?.textContent || "Analyze CV";
+  const debug=document.getElementById("analyzeDebug");
   const results=document.getElementById("results");
+  const btn=event?.target || document.getElementById("analyzeBtn");
+  const old=btn?.textContent || "Analyze CV";
 
-  if(btn){
-    btn.innerHTML='<span class="analyzing-dots">Analyzing</span>';
-    btn.disabled=true;
+  function setDebug(msg,type=""){
+    console.log("FynalHire analyze:",msg);
+    if(debug){
+      debug.style.display="block";
+      debug.textContent=msg;
+      debug.style.background=type==="error" ? "#fee2e2" : "#eff6ff";
+      debug.style.color=type==="error" ? "#991b1b" : "#1e3a8a";
+      debug.style.borderColor=type==="error" ? "#fecaca" : "#bfdbfe";
+    }
   }
-
-  results.style.display="block";
-  results.innerHTML=`<div class="insight"><h4><span class="analyzing-dots">Analyzing your CV</span></h4><p>FynalHire is comparing the CV with the job description and preparing recruiter-style feedback.</p></div>`;
-  results.scrollIntoView({behavior:"smooth"});
-
-  const controller=new AbortController();
-  const timeout=setTimeout(()=>controller.abort(),90000);
 
   try{
+    setDebug("Preparing analysis...");
+
+    const {data:sessionData,error:sessionError}=await fynalhireClient.auth.getSession();
+
+    if(sessionError){
+      setDebug("Session error: "+sessionError.message,"error");
+      return;
+    }
+
+    if(!sessionData || !sessionData.session){
+      setDebug("Please sign in before scanning.","error");
+      openAuth();
+      return;
+    }
+
+    const jd=document.getElementById("jdText").value.trim();
+    const cv=document.getElementById("cvText").value.trim();
+
+    if(!jd||!cv){
+      setDebug("Please paste both Job Description and CV text.","error");
+      alert("Please paste both Job Description and CV text.");
+      return;
+    }
+
+    if(btn){
+      btn.innerHTML='<span class="analyzing-dots">Analyzing</span>';
+      btn.disabled=true;
+    }
+
+    results.style.display="block";
+    results.innerHTML='<div class="insight"><h4><span class="analyzing-dots">Analyzing your CV</span></h4><p>FynalHire is comparing the CV with the job description and preparing recruiter-style feedback.</p></div>';
+    results.scrollIntoView({behavior:"smooth"});
+
+    setDebug("Calling Supabase Edge Function: analyze-cv...");
+
+    const controller=new AbortController();
+    const timeout=setTimeout(()=>controller.abort(),90000);
+
     const res=await fetch(`${FYNALHIRE_SUPABASE_URL}/functions/v1/analyze-cv`,{
       method:"POST",
       headers:{
@@ -735,37 +785,43 @@ async function analyzeWithFynalHireAPI(event){
       body:JSON.stringify({
         jd_text:jd,
         cv_text:cv,
-        audience:selectedArea,
+        audience:selectedArea || "jobseeker",
         region:Intl.DateTimeFormat().resolvedOptions().timeZone||"global"
       }),
       signal:controller.signal
     });
 
     clearTimeout(timeout);
+    setDebug("Backend replied with status: "+res.status);
 
     let data={};
-    try{data=await res.json();}catch(e){data={error:"INVALID_RESPONSE",message:"Backend returned an invalid response."};}
+    try{
+      data=await res.json();
+    }catch(parseErr){
+      data={error:"INVALID_RESPONSE",message:"Backend returned invalid JSON."};
+    }
 
     if(!res.ok){
       if(data.error==="SCAN_LIMIT_REACHED"){
-        results.innerHTML=`
-          <div class="limit-box">
-            <p>You have zero free scans left for this month.</p>
-            <p>Please buy the plan that suits your requirement to continue.</p>
-            <button type="button" class="btn-primary" onclick="showPricingFor(selectedArea)">View Plans</button>
-          </div>
-        `;
+        results.innerHTML='<div class="limit-box"><p>You have zero free scans left for this month.</p><p>Please buy the plan that suits your requirement to continue.</p><button type="button" class="btn-primary" onclick="showPricingFor(selectedArea)">View Plans</button></div>';
       }else{
-        results.innerHTML=`<div class="limit-box"><p>Analysis failed: ${esc(data.message||data.error||"Unknown error")}</p><p>Please try again. If this continues, check Supabase Edge Function logs.</p></div>`;
+        results.innerHTML='<div class="limit-box"><p>Analysis failed: '+esc(data.message||data.error||"Unknown error")+'</p><p>Please try again. If this continues, check Supabase Edge Function logs.</p></div>';
       }
+      setDebug("Analysis failed: "+(data.message||data.error||"Unknown error"),"error");
       return;
     }
 
+    setDebug("Analysis completed.");
     renderLiveResult(data.result,data.usage);
 
   }catch(e){
-    clearTimeout(timeout);
-    results.innerHTML=`<div class="limit-box"><p>${e.name==="AbortError" ? "Analysis timed out after 90 seconds." : "Analysis failed: "+esc(e.message)}</p><p>Please try again.</p></div>`;
+    const msg=e.name==="AbortError" ? "Analysis timed out after 90 seconds." : "Analysis failed: "+e.message;
+    setDebug(msg,"error");
+    if(results){
+      results.style.display="block";
+      results.innerHTML='<div class="limit-box"><p>'+esc(msg)+'</p><p>Please try again.</p></div>';
+    }
+    console.error("Analyze failed:",e);
   }finally{
     if(btn){
       btn.textContent=old;
@@ -787,7 +843,7 @@ function textCard(title,text,cls=""){if(!text)return "";return `<div class="insi
 function esc(str){return String(str||"").replace(/[&<>"']/g,s=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[s]));}
 
 window.addEventListener("load",async()=>{
-  console.log("FynalHire clean rebuilt auth flow loaded.");
+  console.log("FynalHire analyze-debug build loaded.");
   await refreshAuth();
 });
 fynalhireClient.auth.onAuthStateChange(()=>refreshAuth());
