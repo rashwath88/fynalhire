@@ -1181,7 +1181,7 @@ async function analyzeWithFynalHireAPI(event){
     results.innerHTML='<div class="insight"><h4><span class="analyzing-dots">Analyzing your CV</span></h4><p>FynalHire is comparing the CV with the job description and preparing recruiter-style feedback.</p></div>';
     results.scrollIntoView({behavior:"smooth"});
 
-    setDebug("Calling Supabase Edge Function: analyze-cv...");
+    setDebug("");
 
     const controller=new AbortController();
     const timeout=setTimeout(()=>controller.abort(),90000);
@@ -1216,7 +1216,7 @@ async function analyzeWithFynalHireAPI(event){
       if(data.error==="SCAN_LIMIT_REACHED"){
         results.innerHTML='<div class="limit-box"><p>You have zero free scans left for this month.</p><p>Please buy the plan that suits your requirement to continue.</p><button type="button" class="btn-primary" onclick="showPricingFor(selectedArea)">View Plans</button></div>';
       }else{
-        results.innerHTML='<div class="limit-box"><p>Analysis failed: '+esc(data.message||data.error||"Unknown error")+'</p><p>Please try again. If this continues, check Supabase Edge Function logs.</p></div>';
+        results.innerHTML='<div class="limit-box"><p>Analysis failed: '+esc(data.message||data.error||"Unknown error")+'</p><p>Please try again. If this continues, contact support if the issue continues.</p></div>';
       }
       setDebug("Analysis failed: "+(data.message||data.error||"Unknown error"),"error");
       return;
@@ -1283,7 +1283,7 @@ function textCard(title,text,cls=""){if(!text)return "";return `<div class="insi
 function esc(str){return String(str||"").replace(/[&<>"']/g,s=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[s]));}
 
 window.addEventListener("load",async()=>{
-  console.log("FynalHire robust session token build loaded.");
+  console.log("FynalHire production UX build loaded.");
   await refreshAuth();
 });
 fynalhireClient.auth.onAuthStateChange(()=>refreshAuth());
