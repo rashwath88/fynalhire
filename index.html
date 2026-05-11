@@ -973,28 +973,79 @@ function handleCVUpload(event){
 function clearLegacyStoredTokens(){
   try{
     localStorage.removeItem("fh_access_token");
+  }catch(e){}
+}
+
+function decodeJwtPayload(token){
+  try{
+    const payload=token.split(".")[1];
+    const normalized=payload.replace(/-/g,"+").replace(/_/g,"/");
+    return JSON.parse(atob(normalized));
   }catch(e){
-    console.warn("Could not clear legacy token:", e);
+    return null;
   }
 }
 
-async function getAccessTokenFast(){
-  // Always use Supabase's current session. Old manually stored tokens can expire and cause Invalid JWT.
-  clearLegacyStoredTokens();
+function isJwtStillValid(token){
+  const payload=decodeJwtPayload(token);
+  if(!payload || !payload.exp) return false;
+  const now=Math.floor(Date.now()/1000);
+  return payload.exp > now + 60;
+}
 
-  const timeoutPromise=new Promise((_,reject)=>setTimeout(()=>reject(new Error("Session lookup timeout")),8000));
-  const sessionPromise=fynalhireClient.auth.getSession();
-  const {data,error}=await Promise.race([sessionPromise,timeoutPromise]);
+function getStoredSupabaseAccessTokenSafe(){
+  try{
+    clearLegacyStoredTokens();
 
-  if(error) throw error;
+    for(let i=0;i<localStorage.length;i++){
+      const key=localStorage.key(i);
+      if(!key) continue;
+      if(!key.includes("auth-token")) continue;
 
-  if(data && data.session && data.session.access_token){
-    return data.session.access_token;
+      const raw=localStorage.getItem(key);
+      if(!raw) continue;
+
+      try{
+        const parsed=JSON.parse(raw);
+        const candidates=[
+          parsed?.access_token,
+          parsed?.currentSession?.access_token,
+          parsed?.session?.access_token
+        ].filter(Boolean);
+
+        for(const token of candidates){
+          if(isJwtStillValid(token)) return token;
+        }
+      }catch(_){}
+    }
+  }catch(e){
+    console.warn("Could not inspect Supabase local session:",e);
   }
-
   return null;
 }
 
+async function getAccessTokenFast(){
+  clearLegacyStoredTokens();
+
+  try{
+    const timeoutPromise=new Promise((_,reject)=>setTimeout(()=>reject(new Error("Session lookup timeout")),4500));
+    const sessionPromise=fynalhireClient.auth.getSession();
+    const {data,error}=await Promise.race([sessionPromise,timeoutPromise]);
+
+    if(error) throw error;
+
+    if(data && data.session && data.session.access_token && isJwtStillValid(data.session.access_token)){
+      return data.session.access_token;
+    }
+  }catch(e){
+    console.warn("Supabase getSession failed/timed out, checking stored session:",e);
+  }
+
+  const stored=getStoredSupabaseAccessTokenSafe();
+  if(stored) return stored;
+
+  return null;
+}
 
 async function extractJDFromUrl(event){
   const url=document.getElementById("jdUrl").value.trim();
@@ -1177,7 +1228,10 @@ async function analyzeWithFynalHireAPI(event){
     loadUserProfile().then(()=>updateTopUserChip()).catch(e=>console.warn("Post-analysis profile refresh failed:",e));
 
   }catch(e){
-    const msg=e.name==="AbortError" ? "Analysis timed out after 90 seconds." : "Analysis failed: "+e.message;
+    let msg=e.name==="AbortError" ? "Analysis timed out after 90 seconds." : "Analysis failed: "+e.message;
+    if(String(e.message||"").includes("Session lookup timeout")){
+      msg="Your login session could not be confirmed quickly. Please sign out, sign in again, and retry. If it repeats, clear site data for fynalhire.vercel.app.";
+    }
     setDebug(msg,"error");
     if(results){
       results.style.display="block";
@@ -1229,7 +1283,7 @@ function textCard(title,text,cls=""){if(!text)return "";return `<div class="insi
 function esc(str){return String(str||"").replace(/[&<>"']/g,s=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[s]));}
 
 window.addEventListener("load",async()=>{
-  console.log("FynalHire my-account contact build loaded.");
+  console.log("FynalHire robust session token build loaded.");
   await refreshAuth();
 });
 fynalhireClient.auth.onAuthStateChange(()=>refreshAuth());
