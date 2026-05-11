@@ -186,6 +186,94 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
 .contact-card{max-width:760px;margin:0 auto;background:#fff;border:1.5px solid var(--border);border-radius:22px;padding:28px;text-align:center}
 .contact-email{display:inline-block;margin-top:12px;padding:12px 18px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:999px;font-weight:900;text-decoration:none}
 .legal-operator-note{color:#cbd5e1;font-size:13px;line-height:1.6;margin-top:12px}
+
+/* Sample result preview card on home page */
+.sample-preview-wrap{
+  max-width:1100px;
+  margin:10px auto 54px;
+  padding:0 24px;
+}
+.sample-preview{
+  background:linear-gradient(135deg,#0f172a,#1e3a8a);
+  border:1.5px solid rgba(191,219,254,.45);
+  border-radius:28px;
+  padding:30px;
+  color:white;
+  box-shadow:0 24px 70px rgba(15,23,42,.20);
+  display:grid;
+  grid-template-columns:220px 1fr;
+  gap:28px;
+  align-items:center;
+}
+.sample-score-circle{
+  width:180px;
+  height:180px;
+  border-radius:999px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  margin:auto;
+  background:
+    radial-gradient(circle at center,#0f172a 58%,transparent 59%),
+    conic-gradient(#60a5fa 0 92%,rgba(255,255,255,.18) 92% 100%);
+  border:1px solid rgba(255,255,255,.25);
+}
+.sample-score-circle strong{
+  font-size:44px;
+  line-height:1;
+  letter-spacing:-.04em;
+  color:#bfdbfe;
+}
+.sample-score-circle span{
+  margin-top:8px;
+  color:#dbeafe;
+  font-size:13px;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+}
+.sample-preview h2{
+  margin:0 0 8px;
+  font-size:28px;
+  letter-spacing:-.03em;
+}
+.sample-preview p{
+  color:#dbeafe;
+  line-height:1.65;
+  margin:0 0 18px;
+}
+.sample-preview-grid{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:12px;
+}
+.sample-preview-item{
+  background:rgba(255,255,255,.09);
+  border:1px solid rgba(255,255,255,.16);
+  border-radius:18px;
+  padding:16px;
+}
+.sample-preview-item small{
+  display:block;
+  color:#bfdbfe;
+  font-weight:800;
+  margin-bottom:8px;
+}
+.sample-preview-item b{
+  color:white;
+  font-size:18px;
+}
+@media(max-width:760px){
+  .sample-preview{
+    grid-template-columns:1fr;
+    text-align:center;
+  }
+  .sample-preview-grid{
+    grid-template-columns:1fr;
+  }
+}
+
 </style>
 </head>
 <body>
@@ -215,6 +303,34 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
       <button type="button" class="btn-outline" onclick="openUserTypeModal('pricing')">Choose Your Plan</button>
     </div>
   </div>
+
+  <section class="sample-preview-wrap" aria-label="Sample FynalHire result preview">
+    <div class="sample-preview">
+      <div class="sample-score-circle">
+        <strong>9.2/10</strong>
+        <span>Score</span>
+      </div>
+      <div>
+        <h2>See what FynalHire can reveal before you apply.</h2>
+        <p>This sample preview shows the kind of structured insight users can receive after comparing a CV with a real job description.</p>
+        <div class="sample-preview-grid">
+          <div class="sample-preview-item">
+            <small>Role alignment</small>
+            <b>Strong</b>
+          </div>
+          <div class="sample-preview-item">
+            <small>Keyword coverage</small>
+            <b>High</b>
+          </div>
+          <div class="sample-preview-item">
+            <small>Improvement areas</small>
+            <b>3 found</b>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section class="selector">
     <div class="card">
       <h2>👤 For Job Seekers</h2>
