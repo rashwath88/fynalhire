@@ -456,7 +456,7 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
       <div class="account-card">
         <h3>Plan Expiry</h3>
         <div class="account-value" id="accountExpiry">—</div>
-        <p class="account-muted" id="accountExpiryNote">Paid plans renew monthly once Stripe is connected.</p>
+        <p class="account-muted" id="accountExpiryNote">Paid plans show the next renewal or expiry date after Stripe sync.</p>
       </div>
     </div>
     <div style="margin-top:22px;display:flex;gap:12px;flex-wrap:wrap;justify-content:center">
@@ -617,10 +617,12 @@ let idleInterval=null;
 let currentUser=null;
 let currentProfile=null;
 
-const STRIPE_LINKS={
-  growth:"https://buy.stripe.com/eVqfZ9gHUg589wgfT618c00",
-  elite:"https://buy.stripe.com/9B6aEPezM06a23O6iw18c01",
-  rec_premium:"https://buy.stripe.com/5kQ3cnbnA9GK0ZK0Yc18c02"
+const SUBSCRIPTION_CHECKOUT_FUNCTION="create-subscription-checkout";
+
+const CHECKOUT_PLAN_MAP={
+  growth:"growth",
+  elite:"elite",
+  rec_premium:"recruiter"
 };
 
 
@@ -645,7 +647,7 @@ async function loadUserProfile(){
 
   const {data,error}=await fynalhireClient
     .from("profiles")
-    .select("id,email,user_type,plan,subscription_status,subscription_current_period_end,created_at")
+    .select("id,email,user_type,plan,subscription_status,subscription_current_period_start,subscription_current_period_end,stripe_customer_id,stripe_subscription_id,stripe_price_id,plan_started_at,plan_expires_at,plan_status,created_at")
     .eq("id",currentUser.id)
     .single();
 
@@ -768,6 +770,32 @@ function isFreePlan(plan){
   return plan==="free" || plan==="rec_free" || !plan;
 }
 
+function effectivePlanStatus(){
+  return currentProfile?.plan_status || currentProfile?.subscription_status || (isFreePlan(currentProfile?.plan) ? "free" : "active");
+}
+
+function effectivePlanExpiry(){
+  return currentProfile?.plan_expires_at || currentProfile?.subscription_current_period_end || null;
+}
+
+function formatFynalHireDate(value){
+  if(!value) return "Not applicable";
+  const d=new Date(value);
+  if(Number.isNaN(d.getTime())) return "Not applicable";
+  return d.toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"});
+}
+
+function isPlanCurrentlyActive(){
+  const plan=currentProfile?.plan || "free";
+  if(isFreePlan(plan)) return true;
+  const expiry=effectivePlanExpiry();
+  const status=String(effectivePlanStatus() || "").toLowerCase();
+  if(["cancelled","expired","refunded","disputed","past_due"].includes(status)) return false;
+  if(expiry && new Date(expiry).getTime() < Date.now()) return false;
+  return true;
+}
+
+
 function freeScanLimitForProfile(){
   const plan=currentProfile?.plan || "free";
   const type=currentProfile?.user_type || selectedArea || "jobseeker";
@@ -848,12 +876,15 @@ async function showMyAccount(){
   const plan=currentProfile?.plan || "free";
   const type=currentProfile?.user_type || selectedArea || "jobseeker";
   const created=currentUser?.created_at ? new Date(currentUser.created_at).toLocaleDateString() : "—";
-  const expiry=currentProfile?.subscription_current_period_end ? new Date(currentProfile.subscription_current_period_end).toLocaleDateString() : "Not applicable";
+  const status=effectivePlanStatus();
+  const expiryRaw=effectivePlanExpiry();
+  const expiry=formatFynalHireDate(expiryRaw);
+  const active=isPlanCurrentlyActive();
 
   document.getElementById("accountName").textContent=getFirstNameFromUser();
   document.getElementById("accountEmail").textContent=currentUser.email || "";
   document.getElementById("accountPlan").textContent=planLabel(plan);
-  document.getElementById("accountPlanNote").textContent=`Account type: ${type==="recruiter" ? "Recruiter" : "Job Seeker"} · Created: ${created}`;
+  document.getElementById("accountPlanNote").textContent=`Account type: ${type==="recruiter" ? "Recruiter" : "Job Seeker"} · Status: ${status || "free"} · Created: ${created}`;
 
   if(isFreePlan(plan)){
     document.getElementById("accountScans").textContent=`${usage.left} left`;
@@ -863,8 +894,13 @@ async function showMyAccount(){
   }else{
     document.getElementById("accountScans").textContent="Unlimited";
     document.getElementById("accountExpiry").textContent=expiry;
-    document.getElementById("accountExpiryNote").textContent=currentProfile?.subscription_status==="expired" ? "Your plan has expired. Please renew." : "Your paid plan is active.";
-    document.getElementById("accountUpgradeBtn").style.display=plan==="elite" || plan==="rec_premium" ? "none" : "inline-block";
+    if(!active){
+      document.getElementById("accountExpiryNote").textContent="Your paid access is not active. Please renew or contact support.";
+      document.getElementById("accountUpgradeBtn").style.display="inline-block";
+    }else{
+      document.getElementById("accountExpiryNote").textContent=expiryRaw ? "Your paid plan is active and renews monthly unless cancelled." : "Your paid plan is active. Renewal date is being synced.";
+      document.getElementById("accountUpgradeBtn").style.display=plan==="elite" || plan==="rec_premium" ? "none" : "inline-block";
+    }
   }
 
   showPage("account");
@@ -1280,9 +1316,9 @@ async function selectPlan(plan,type){
     return;
   }
 
-  completePlanSelection(plan,type);
+  await completePlanSelection(plan,type);
 }
-function completePlanSelection(plan,type){
+async function completePlanSelection(plan,type){
   selectedArea=type || selectedArea || "jobseeker";
   localStorage.setItem("fh_area",selectedArea);
 
@@ -1291,14 +1327,37 @@ function completePlanSelection(plan,type){
     return;
   }
 
-  const url=STRIPE_LINKS[plan];
+  const checkoutPlan=CHECKOUT_PLAN_MAP[plan] || plan;
 
-  if(!url || url.includes("PASTE_STRIPE")){
-    alert("Stripe checkout link for this plan is not connected yet.");
-    return;
+  try{
+    showGlobalNotice("Opening secure checkout...");
+    const {data:sessionData}=await fynalhireClient.auth.getSession();
+    if(!sessionData?.session){
+      requireLoginForUpgrade(plan,type);
+      return;
+    }
+
+    const {data,error}=await fynalhireClient.functions.invoke(SUBSCRIPTION_CHECKOUT_FUNCTION,{
+      body:{plan:checkoutPlan}
+    });
+
+    if(error){
+      console.error("Subscription checkout error:",error);
+      showGlobalNotice(error.message || "Could not start checkout. Please try again.","warning");
+      return;
+    }
+
+    if(!data || !data.url){
+      console.error("Missing checkout URL:",data);
+      showGlobalNotice("Checkout did not return a payment link. Please try again.","warning");
+      return;
+    }
+
+    window.location.assign(data.url);
+  }catch(e){
+    console.error("Checkout exception:",e);
+    showGlobalNotice(e.message || "Could not open checkout. Please try again.","warning");
   }
-
-  window.location.assign(url);
 }
 
 function resetIdle(){
@@ -1700,28 +1759,28 @@ function showPaymentBanner(message,type="success"){
 async function handlePaymentReturn(){
   const params=new URLSearchParams(window.location.search);
   const payment=params.get("payment");
-  const plan=params.get("plan");
+
+  if(payment==="cancelled"){
+    showPaymentBanner("Checkout was cancelled. No payment was taken.","error");
+    cleanPaymentUrl();
+    return;
+  }
 
   if(payment!=="success")return;
 
-  const readablePlan={
-    growth:"Growth",
-    elite:"Elite",
-    rec_premium:"Recruiter Premium"
-  }[plan] || "paid";
+  showPaymentBanner("Payment successful. Activating your plan...");
 
-  showPaymentBanner(`Payment successful. Activating your ${readablePlan} plan...`);
-
-  for(let i=0;i<6;i++){
+  for(let i=0;i<8;i++){
     try{
       await new Promise(resolve=>setTimeout(resolve, i===0 ? 2500 : 2000));
       await refreshAuth();
       await loadUserProfile();
       await updateTopUserChip();
 
-      const currentPlan=currentProfile?.plan || "";
-      if(currentPlan===plan){
-        showPaymentBanner(`Your ${readablePlan} plan is active. You can now use your upgraded features.`);
+      const currentPlan=currentProfile?.plan || "free";
+      const active=isPlanCurrentlyActive();
+      if(!isFreePlan(currentPlan) && active){
+        showPaymentBanner(`Your ${planLabel(currentPlan)} plan is active. You can now use your upgraded features.`);
         await showMyAccount();
         cleanPaymentUrl();
         return;
