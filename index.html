@@ -274,6 +274,48 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
   }
 }
 
+
+.payment-return-banner{
+  display:none;
+  max-width:1100px;
+  margin:22px auto 0;
+  padding:16px 18px;
+  border-radius:16px;
+  border:1.5px solid #bbf7d0;
+  background:#dcfce7;
+  color:#166534;
+  font-weight:800;
+  line-height:1.5;
+}
+.payment-return-banner.show{
+  display:block;
+}
+.payment-return-banner.error{
+  border-color:#fecaca;
+  background:#fee2e2;
+  color:#991b1b;
+}
+
+
+.fh-global-notice{
+  display:none;
+  max-width:1100px;
+  margin:22px auto 0;
+  padding:16px 18px;
+  border-radius:16px;
+  border:1.5px solid #bfdbfe;
+  background:#eff6ff;
+  color:#1e3a8a;
+  font-weight:800;
+  line-height:1.5;
+}
+.fh-global-notice.show{display:block}
+.fh-global-notice.warning{
+  border-color:#f59e0b;
+  background:#fef3c7;
+  color:#92400e;
+}
+
 </style>
 </head>
 <body>
@@ -292,6 +334,8 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
 </header>
 
 <div class="security-bar" id="securityBar">For your security, you will be signed out in <span id="idleTimer">02:00</span> due to inactivity. Move your mouse or press any key to stay signed in.</div>
+<div id="paymentReturnBanner" class="payment-return-banner"></div>
+<div id="fhGlobalNotice" class="fh-global-notice"></div>
 
 <section id="page-home" class="page active">
   <div class="hero">
@@ -522,8 +566,8 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
 <div id="authModal" class="auth-modal-overlay">
   <div class="auth-modal">
     <button type="button" class="auth-close" onclick="closeAuth()">Close</button>
-    <h2>Sign In / Create Account</h2>
-    <p style="color:#334155;line-height:1.6">Create an account or sign in before continuing.</p>
+    <h2 id="authModalTitle">Sign In / Create Account</h2>
+    <p id="authModalMessage" style="color:#334155;line-height:1.6">Create an account or sign in before continuing.</p>
     <input id="authEmail" type="email" placeholder="Email address">
     <input id="authPassword" type="password" placeholder="Password">
     <div id="authStatus" class="auth-status"></div>
@@ -597,7 +641,7 @@ async function saveUserRole(type){
   await getCurrentUser();
   if(!currentUser){
     closeRoleSetup();
-    openAuth();
+    openAuthWithMessage("Please log in to continue.","Log in required");
     return;
   }
 
@@ -646,14 +690,18 @@ async function routeAfterLogin(){
   await updateTopUserChip();
 
   if(pendingAction==="select_plan" && pendingPlan){
-    completePlanSelection(pendingPlan,selectedArea);
+    const planToResume=pendingPlan;
+    const areaToResume=selectedArea;
+    pendingAction=null;
+    pendingPlan=null;
+    completePlanSelection(planToResume,areaToResume);
   }else if(pendingAction==="enter_area"){
+    pendingAction=null;
+    pendingPlan=null;
     enterArea(selectedArea);
   }else{
     enterArea(selectedArea);
   }
-
-  pendingAction=null;
 }
 
 
@@ -754,7 +802,7 @@ async function updateTopUserChip(){
 async function showMyAccount(){
   await getCurrentUser();
   if(!currentUser){
-    openAuth();
+    openAuthWithMessage("Please log in to view your account.","Log in required");
     return;
   }
 
@@ -804,6 +852,45 @@ function showAnalysisStatus(message,type=""){
   box.className="status "+type;
   box.innerHTML=message;
 }
+
+function showGlobalNotice(message,type=""){
+  const box=document.getElementById("fhGlobalNotice");
+  if(!box)return;
+  box.textContent=message;
+  box.className="fh-global-notice show"+(type==="warning"?" warning":"");
+  setTimeout(()=>{box.classList.remove("show");},7000);
+}
+
+function setAuthPrompt(message,title="Sign In / Create Account"){
+  const titleEl=document.getElementById("authModalTitle");
+  const messageEl=document.getElementById("authModalMessage");
+  if(titleEl) titleEl.textContent=title;
+  if(messageEl) messageEl.textContent=message || "Create an account or sign in before continuing.";
+}
+
+function openAuthWithMessage(message,title="Sign In / Create Account"){
+  setAuthPrompt(message,title);
+  openAuth();
+}
+
+function requireLoginForScan(area){
+  selectedArea=area || selectedArea || "jobseeker";
+  localStorage.setItem("fh_area",selectedArea);
+  pendingAction="enter_area";
+  showGlobalNotice("Log in to start your free scan.");
+  openAuthWithMessage("Log in to start your free scan.","Log in required");
+}
+
+function requireLoginForUpgrade(plan,type){
+  selectedArea=type || selectedArea || "jobseeker";
+  localStorage.setItem("fh_area",selectedArea);
+  pendingAction="select_plan";
+  pendingPlan=plan;
+  showGlobalNotice("Log in to your account to upgrade your plan securely.");
+  openAuthWithMessage("Log in to your account to upgrade your plan securely.","Secure upgrade");
+}
+
+
 function openAuth(){
   document.getElementById("authStatus").style.display="none";
   document.getElementById("authModal").style.display="flex";
@@ -823,8 +910,7 @@ async function openUserTypeModal(purpose){
       openRoleSetup();
       return;
     }
-    pendingAction="enter_area";
-    openAuth();
+    requireLoginForScan(selectedArea || "jobseeker");
     return;
   }
 
@@ -857,7 +943,7 @@ function showPricingFor(type){
 }
 async function handleAuthButton(){
   if(signedIn){await logoutUser();}
-  else{openAuth();}
+  else{openAuthWithMessage("Create an account or sign in before continuing.","Sign In / Create Account");}
 }
 
 async function refreshAuth(){
@@ -1037,14 +1123,14 @@ async function requireLogin(area){
   try{
     const {data}=await fynalhireClient.auth.getSession();
     if(!data || !data.session){
-      openAuth();
+      openAuthWithMessage("Please log in to continue.","Log in required");
       return false;
     }
     signedIn=true;
     return true;
   }catch(e){
     console.warn("Auth check failed:",e);
-    openAuth();
+    openAuthWithMessage("Please log in again to continue.","Log in required");
     return false;
   }
 }
@@ -1062,17 +1148,12 @@ async function startAreaFlow(type){
     return;
   }
 
-  selectedArea=type;
-  localStorage.setItem("fh_area",type);
-  pendingAction="enter_area";
-  openAuth();
+  requireLoginForScan(type);
 }
 
 function enterArea(area){
   if(!signedIn){
-    pendingAction="enter_area";
-    selectedArea=area || selectedArea;
-    openAuth();
+    requireLoginForScan(area || selectedArea);
     return;
   }
 
@@ -1089,8 +1170,18 @@ async function selectPlan(plan,type){
   localStorage.setItem("fh_area",type);
   pendingPlan=plan;
   pendingAction="select_plan";
-  const ok=await requireLogin(type);
-  if(ok){completePlanSelection(plan,type);}
+
+  await getCurrentUser();
+  if(!currentUser || !signedIn){
+    if(plan==="free" || plan==="rec_free"){
+      requireLoginForScan(type);
+    }else{
+      requireLoginForUpgrade(plan,type);
+    }
+    return;
+  }
+
+  completePlanSelection(plan,type);
 }
 function completePlanSelection(plan,type){
   if(plan==="free"||plan==="rec_free"){enterArea(type);return;}
@@ -1122,8 +1213,9 @@ function startIdleTimer(){
     idleSeconds--;
     updateIdleDisplay();
     if(idleSeconds<=0){
-      alert("You have been signed out due to inactivity.");
       await logoutUser();
+      showGlobalNotice("For your security, you’ve been logged out due to inactivity. Please log in again to continue.","warning");
+      openAuthWithMessage("For your security, you’ve been logged out due to inactivity. Please log in again to continue.","Session expired");
     }
   },1000);
 }
@@ -1365,8 +1457,8 @@ async function analyzeWithFynalHireAPI(event){
     const accessToken=await getAccessTokenFast();
 
     if(!accessToken){
-      setDebug("Please sign in before scanning.","error");
-      openAuth();
+      setDebug("Log in to start your free scan.","error");
+      requireLoginForScan(selectedArea || "jobseeker");
       return;
     }
 
@@ -1489,9 +1581,64 @@ function listCard(title,arr,cls=""){arr=Array.isArray(arr)?arr:[];if(!arr.length
 function textCard(title,text,cls=""){if(!text)return "";return `<div class="insight ${cls}"><h4>${title}</h4><p>${esc(text||"")}</p></div>`;}
 function esc(str){return String(str||"").replace(/[&<>"']/g,s=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[s]));}
 
+
+function showPaymentBanner(message,type="success"){
+  const banner=document.getElementById("paymentReturnBanner");
+  if(!banner)return;
+  banner.textContent=message;
+  banner.className="payment-return-banner show"+(type==="error"?" error":"");
+}
+
+async function handlePaymentReturn(){
+  const params=new URLSearchParams(window.location.search);
+  const payment=params.get("payment");
+  const plan=params.get("plan");
+
+  if(payment!=="success")return;
+
+  const readablePlan={
+    growth:"Growth",
+    elite:"Elite",
+    rec_premium:"Recruiter Premium"
+  }[plan] || "paid";
+
+  showPaymentBanner(`Payment successful. Activating your ${readablePlan} plan...`);
+
+  for(let i=0;i<6;i++){
+    try{
+      await new Promise(resolve=>setTimeout(resolve, i===0 ? 2500 : 2000));
+      await refreshAuth();
+      await loadUserProfile();
+      await updateTopUserChip();
+
+      const currentPlan=currentProfile?.plan || "";
+      if(currentPlan===plan){
+        showPaymentBanner(`Your ${readablePlan} plan is active. You can now use your upgraded features.`);
+        await showMyAccount();
+        cleanPaymentUrl();
+        return;
+      }
+    }catch(e){
+      console.warn("Payment return refresh attempt failed:",e);
+    }
+  }
+
+  showPaymentBanner("Payment was successful. Your plan may take a moment to activate. Please refresh the page or check My Account shortly.","error");
+}
+
+function cleanPaymentUrl(){
+  try{
+    const cleanUrl=window.location.origin+window.location.pathname;
+    window.history.replaceState({},document.title,cleanUrl);
+  }catch(e){}
+}
+
+
 window.addEventListener("load",async()=>{
   console.log("FynalHire compliance footer build loaded.");
   await refreshAuth();
+  await handleOAuthReturn();
+  await handlePaymentReturn();
 });
 fynalhireClient.auth.onAuthStateChange(()=>refreshAuth());
 </script>
