@@ -316,6 +316,30 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
   color:#92400e;
 }
 
+
+.plan.current-plan{
+  border:2px solid #2563eb;
+  box-shadow:0 18px 45px rgba(37,99,235,.12);
+  position:relative;
+}
+.current-plan-badge{
+  display:inline-block;
+  margin-bottom:12px;
+  padding:8px 12px;
+  border-radius:999px;
+  background:#eff6ff;
+  color:#1d4ed8;
+  border:1px solid #bfdbfe;
+  font-weight:900;
+  font-size:13px;
+}
+.btn-disabled-plan{
+  background:#94a3b8!important;
+  color:white!important;
+  cursor:not-allowed!important;
+  opacity:.9;
+}
+
 </style>
 </head>
 <body>
@@ -393,13 +417,13 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
   <div class="content">
     <div class="section-head"><h1 id="pricingTitle">Pricing</h1><p id="pricingSub">Select whether you are a Job Seeker or Recruiter to see the correct plans.</p></div>
     <div class="plan-grid" id="jobPricing" style="display:none">
-      <div class="plan"><h3>Free</h3><div class="price">Free</div><ul><li>3 scans/month</li><li>CV score against JD</li><li>Score capped at 9.5</li></ul><button type="button" class="btn-primary" style="width:100%;margin-top:15px" onclick="selectPlan('free','jobseeker')">Start Free</button></div>
-      <div class="plan"><h3>Growth</h3><div class="price">$10<span>/mo</span></div><ul><li>Unlimited scans</li><li>Detailed analysis</li><li>PDF export</li></ul><button type="button" class="btn-primary" style="width:100%;margin-top:15px" onclick="selectPlan('growth','jobseeker')">Buy Growth</button></div>
-      <div class="plan"><h3>Elite</h3><div class="price">$14<span>/mo</span></div><ul><li>Recruiter Mind Simulation™</li><li>Truth Mode™</li><li>Executive Presence Score™</li><li>Commercial Impact Analysis™</li></ul><button type="button" class="btn-primary" style="width:100%;margin-top:15px" onclick="selectPlan('elite','jobseeker')">Buy Elite</button></div>
+      <div class="plan" id="planCard-free"><div id="planBadge-free"></div><h3>Free</h3><div class="price">Free</div><ul><li>3 scans/month</li><li>CV score against JD</li><li>Score capped at 9.5</li></ul><button type="button" class="btn-primary" style="width:100%;margin-top:15px" id="planBtn-free" onclick="selectPlan('free','jobseeker')">Start Free</button></div>
+      <div class="plan" id="planCard-growth"><div id="planBadge-growth"></div><h3>Growth</h3><div class="price">$10<span>/mo</span></div><ul><li>Unlimited scans</li><li>Detailed analysis</li><li>PDF export</li></ul><button type="button" class="btn-primary" style="width:100%;margin-top:15px" id="planBtn-growth" onclick="selectPlan('growth','jobseeker')">Buy Growth</button></div>
+      <div class="plan" id="planCard-elite"><div id="planBadge-elite"></div><h3>Elite</h3><div class="price">$14<span>/mo</span></div><ul><li>Recruiter Mind Simulation™</li><li>Truth Mode™</li><li>Executive Presence Score™</li><li>Commercial Impact Analysis™</li></ul><button type="button" class="btn-primary" style="width:100%;margin-top:15px" id="planBtn-elite" onclick="selectPlan('elite','jobseeker')">Buy Elite</button></div>
     </div>
     <div class="plan-grid" id="recruiterPricing" style="display:none">
-      <div class="plan"><h3>Recruiter Free</h3><div class="price">Free</div><ul><li>2 scans/month</li><li>Candidate score</li><li>Keyword analysis</li></ul><button type="button" class="btn-primary" style="width:100%;margin-top:15px" onclick="selectPlan('rec_free','recruiter')">Start Recruiter Free</button></div>
-      <div class="plan"><h3>Recruiter Premium</h3><div class="price">$50<span>/mo</span></div><ul><li>Bulk CV upload</li><li>Candidate ranking</li><li>Hiring Risk Flags™</li><li>Recruiter fatigue optimization</li></ul><button type="button" class="btn-primary" style="width:100%;margin-top:15px" onclick="selectPlan('rec_premium','recruiter')">Buy Recruiter Premium</button></div>
+      <div class="plan" id="planCard-rec_free"><div id="planBadge-rec_free"></div><h3>Recruiter Free</h3><div class="price">Free</div><ul><li>2 scans/month</li><li>Candidate score</li><li>Keyword analysis</li></ul><button type="button" class="btn-primary" style="width:100%;margin-top:15px" id="planBtn-rec_free" onclick="selectPlan('rec_free','recruiter')">Start Recruiter Free</button></div>
+      <div class="plan" id="planCard-rec_premium"><div id="planBadge-rec_premium"></div><h3>Recruiter Premium</h3><div class="price">$49<span>/mo</span></div><ul><li>Bulk CV upload</li><li>Candidate ranking</li><li>Hiring Risk Flags™</li><li>Recruiter fatigue optimization</li></ul><button type="button" class="btn-primary" style="width:100%;margin-top:15px" id="planBtn-rec_premium" onclick="selectPlan('rec_premium','recruiter')">Buy Recruiter Premium</button></div>
     </div>
     <div id="pricingChoiceNotice" class="card" style="text-align:center"><p>Please select Job Seeker or Recruiter first.</p><button type="button" class="btn-primary" onclick="openUserTypeModal('pricing')">Select User Type</button></div>
   </div>
@@ -942,6 +966,55 @@ function chooseUserType(type){
   }
 }
 
+
+function resetPlanCards(){
+  const plans=["free","growth","elite","rec_free","rec_premium"];
+  plans.forEach(plan=>{
+    const card=document.getElementById("planCard-"+plan);
+    const badge=document.getElementById("planBadge-"+plan);
+    const btn=document.getElementById("planBtn-"+plan);
+
+    if(card) card.classList.remove("current-plan");
+    if(badge) badge.innerHTML="";
+    if(btn){
+      btn.disabled=false;
+      btn.classList.remove("btn-disabled-plan");
+      if(plan==="free") btn.textContent="Start Free";
+      if(plan==="growth") btn.textContent="Buy Growth";
+      if(plan==="elite") btn.textContent="Buy Elite";
+      if(plan==="rec_free") btn.textContent="Start Recruiter Free";
+      if(plan==="rec_premium") btn.textContent="Buy Recruiter Premium";
+    }
+  });
+}
+
+function markCurrentPlan(plan){
+  if(!plan)return;
+  const card=document.getElementById("planCard-"+plan);
+  const badge=document.getElementById("planBadge-"+plan);
+  const btn=document.getElementById("planBtn-"+plan);
+
+  if(card) card.classList.add("current-plan");
+  if(badge) badge.innerHTML='<span class="current-plan-badge">Current Plan</span>';
+  if(btn){
+    btn.disabled=true;
+    btn.classList.add("btn-disabled-plan");
+    btn.textContent="Current Plan";
+  }
+}
+
+async function refreshPricingPlanState(){
+  resetPlanCards();
+
+  await getCurrentUser();
+  if(!currentUser)return;
+
+  await loadUserProfile();
+  const activePlan=currentProfile?.plan || "";
+  markCurrentPlan(activePlan);
+}
+
+
 function showPricingFor(type){
   selectedArea=type;
   localStorage.setItem("fh_area",type);
@@ -951,6 +1024,7 @@ function showPricingFor(type){
   document.getElementById("pricingTitle").textContent=type==="jobseeker"?"Job Seeker Plans":"Recruiter Plans";
   document.getElementById("pricingSub").textContent=type==="jobseeker"?"Plans for candidates who want better shortlist chances.":"Plans for recruiters who want faster candidate screening.";
   showPage("pricing");
+  refreshPricingPlanState().catch(e=>console.warn("Plan state refresh failed:",e));
 }
 async function handleAuthButton(){
   if(signedIn){await logoutUser();}
@@ -1198,6 +1272,13 @@ async function selectPlan(plan,type){
   signedIn=true;
   await loadUserProfile();
   await updateTopUserChip();
+
+  const activePlan=currentProfile?.plan || "";
+  if(activePlan===plan){
+    showGlobalNotice("This is already your active plan.");
+    await showMyAccount();
+    return;
+  }
 
   completePlanSelection(plan,type);
 }
