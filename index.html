@@ -689,6 +689,13 @@ async function routeAfterLogin(){
   localStorage.setItem("fh_area",selectedArea);
   await updateTopUserChip();
 
+  if(pendingAction==="show_pricing"){
+    pendingAction=null;
+    pendingPlan=null;
+    showPricingFor(selectedArea);
+    return;
+  }
+
   if(pendingAction==="select_plan" && pendingPlan){
     const planToResume=pendingPlan;
     const areaToResume=selectedArea;
@@ -705,7 +712,7 @@ async function routeAfterLogin(){
     return;
   }
 
-  enterArea(selectedArea);
+  showPage("dashboard");
 }
 
 
@@ -888,8 +895,8 @@ function requireLoginForScan(area){
 function requireLoginForUpgrade(plan,type){
   selectedArea=type || selectedArea || "jobseeker";
   localStorage.setItem("fh_area",selectedArea);
-  pendingAction="select_plan";
-  pendingPlan=plan;
+  pendingAction="show_pricing";
+  pendingPlan=null;
   showGlobalNotice("Log in to your account to upgrade your plan securely.");
   openAuthWithMessage("Log in to your account to upgrade your plan securely.","Secure upgrade");
 }
@@ -1172,15 +1179,17 @@ function enterArea(area){
 async function selectPlan(plan,type){
   selectedArea=type;
   localStorage.setItem("fh_area",type);
-  pendingPlan=plan;
-  pendingAction="select_plan";
 
   await getCurrentUser();
 
   if(!currentUser){
     if(plan==="free" || plan==="rec_free"){
+      pendingAction="enter_area";
+      pendingPlan=null;
       requireLoginForScan(type);
     }else{
+      pendingAction="show_pricing";
+      pendingPlan=null;
       requireLoginForUpgrade(plan,type);
     }
     return;
