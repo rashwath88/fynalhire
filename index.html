@@ -456,7 +456,7 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
       <div class="account-card">
         <h3>Plan Expiry</h3>
         <div class="account-value" id="accountExpiry">—</div>
-        <p class="account-muted" id="accountExpiryNote">Paid plans show the next renewal or expiry date after Stripe sync.</p>
+        <p class="account-muted" id="accountExpiryNote">Paid plans show the next renewal / validity date after Stripe sync.</p>
       </div>
     </div>
     <div style="margin-top:22px;display:flex;gap:12px;flex-wrap:wrap;justify-content:center">
@@ -755,7 +755,16 @@ function getFirstNameFromUser(){
   return "User";
 }
 
+function normalizePlan(plan){
+  const p=String(plan || "free").toLowerCase();
+  if(p==="recruiter" || p==="recruiter_premium" || p==="premium_recruiter") return "rec_premium";
+  if(p==="jobseeker_free") return "free";
+  if(p==="recruiter_free") return "rec_free";
+  return p;
+}
+
 function planLabel(plan){
+  const normalized=normalizePlan(plan);
   const labels={
     free:"Free",
     growth:"Growth",
@@ -763,11 +772,12 @@ function planLabel(plan){
     rec_free:"Recruiter Free",
     rec_premium:"Recruiter Premium"
   };
-  return labels[plan] || "Free";
+  return labels[normalized] || "Free";
 }
 
 function isFreePlan(plan){
-  return plan==="free" || plan==="rec_free" || !plan;
+  const normalized=normalizePlan(plan);
+  return normalized==="free" || normalized==="rec_free" || !normalized;
 }
 
 function effectivePlanStatus(){
@@ -786,20 +796,25 @@ function formatFynalHireDate(value){
 }
 
 function isPlanCurrentlyActive(){
-  const plan=currentProfile?.plan || "free";
+  const plan=normalizePlan(currentProfile?.plan || "free");
   if(isFreePlan(plan)) return true;
   const expiry=effectivePlanExpiry();
   const status=String(effectivePlanStatus() || "").toLowerCase();
-  if(["cancelled","expired","refunded","disputed","past_due"].includes(status)) return false;
+  if(["cancelled","expired","refunded","disputed","past_due","unpaid","incomplete","incomplete_expired"].includes(status)) return false;
   if(expiry && new Date(expiry).getTime() < Date.now()) return false;
   return true;
 }
 
+function hasPaidAccess(){
+  const plan=normalizePlan(currentProfile?.plan || "free");
+  return !isFreePlan(plan) && isPlanCurrentlyActive();
+}
+
 
 function freeScanLimitForProfile(){
-  const plan=currentProfile?.plan || "free";
+  const plan=normalizePlan(currentProfile?.plan || "free");
   const type=currentProfile?.user_type || selectedArea || "jobseeker";
-  if(plan==="rec_free" || type==="recruiter") return 2;
+  if(plan==="rec_free" || (type==="recruiter" && isFreePlan(plan))) return 2;
   if(plan==="free") return 3;
   return 9999;
 }
@@ -873,33 +888,36 @@ async function showMyAccount(){
   await updateTopUserChip();
 
   const usage=await getScanUsage();
-  const plan=currentProfile?.plan || "free";
+  const plan=normalizePlan(currentProfile?.plan || (selectedArea==="recruiter" ? "rec_free" : "free"));
   const type=currentProfile?.user_type || selectedArea || "jobseeker";
   const created=currentUser?.created_at ? new Date(currentUser.created_at).toLocaleDateString() : "—";
-  const status=effectivePlanStatus();
+  const status=String(effectivePlanStatus() || (isFreePlan(plan)?"free":"active")).toLowerCase();
   const expiryRaw=effectivePlanExpiry();
   const expiry=formatFynalHireDate(expiryRaw);
   const active=isPlanCurrentlyActive();
+  const customerId=currentProfile?.stripe_customer_id || "Not linked yet";
+  const subscriptionId=currentProfile?.stripe_subscription_id || "Not linked yet";
 
   document.getElementById("accountName").textContent=getFirstNameFromUser();
-  document.getElementById("accountEmail").textContent=currentUser.email || "";
+  document.getElementById("accountEmail").textContent=currentUser.email || currentProfile?.email || "—";
   document.getElementById("accountPlan").textContent=planLabel(plan);
-  document.getElementById("accountPlanNote").textContent=`Account type: ${type==="recruiter" ? "Recruiter" : "Job Seeker"} · Status: ${status || "free"} · Created: ${created}`;
 
   if(isFreePlan(plan)){
-    document.getElementById("accountScans").textContent=`${usage.left} left`;
-    document.getElementById("accountExpiry").textContent="Monthly reset";
-    document.getElementById("accountExpiryNote").textContent="Free scan allowance resets every month.";
+    document.getElementById("accountPlanNote").textContent=`Account type: ${type==="recruiter" ? "Recruiter" : "Job Seeker"} · Status: Free · Created: ${created}`;
+    document.getElementById("accountScans").textContent=`${usage.left} / ${usage.limit}`;
+    document.getElementById("accountExpiry").textContent="Not applicable";
+    document.getElementById("accountExpiryNote").textContent="Free plans do not have a subscription expiry. Free scan allowance resets monthly.";
     document.getElementById("accountUpgradeBtn").style.display="inline-block";
   }else{
+    document.getElementById("accountPlanNote").textContent=`Status: ${active ? "Active" : status} · Stripe customer: ${customerId} · Subscription: ${subscriptionId}`;
     document.getElementById("accountScans").textContent="Unlimited";
-    document.getElementById("accountExpiry").textContent=expiry;
+    document.getElementById("accountExpiry").textContent=expiryRaw ? expiry : "Syncing";
     if(!active){
-      document.getElementById("accountExpiryNote").textContent="Your paid access is not active. Please renew or contact support.";
+      document.getElementById("accountExpiryNote").textContent="Your paid access is not active or the subscription period has ended. Please renew or contact support.";
       document.getElementById("accountUpgradeBtn").style.display="inline-block";
     }else{
-      document.getElementById("accountExpiryNote").textContent=expiryRaw ? "Your paid plan is active and renews monthly unless cancelled." : "Your paid plan is active. Renewal date is being synced.";
-      document.getElementById("accountUpgradeBtn").style.display=plan==="elite" || plan==="rec_premium" ? "none" : "inline-block";
+      document.getElementById("accountExpiryNote").textContent=expiryRaw ? "Your subscription is active. This is your next renewal / validity date." : "Your subscription is active. Renewal date is still being synced from Stripe.";
+      document.getElementById("accountUpgradeBtn").style.display=(plan==="elite" || plan==="rec_premium") ? "none" : "inline-block";
     }
   }
 
@@ -1046,8 +1064,8 @@ async function refreshPricingPlanState(){
   if(!currentUser)return;
 
   await loadUserProfile();
-  const activePlan=currentProfile?.plan || "";
-  markCurrentPlan(activePlan);
+  const activePlan=normalizePlan(currentProfile?.plan || "");
+  if(isPlanCurrentlyActive()) markCurrentPlan(activePlan);
 }
 
 
@@ -1309,8 +1327,8 @@ async function selectPlan(plan,type){
   await loadUserProfile();
   await updateTopUserChip();
 
-  const activePlan=currentProfile?.plan || "";
-  if(activePlan===plan){
+  const activePlan=normalizePlan(currentProfile?.plan || "");
+  if(activePlan===plan && isPlanCurrentlyActive()){
     showGlobalNotice("This is already your active plan.");
     await showMyAccount();
     return;
@@ -1717,9 +1735,11 @@ function renderLiveResult(r,usage){
   const results=document.getElementById("results");
   results.style.display="block";
 
-  const plan=currentProfile?.plan || "free";
+  const plan=normalizePlan(currentProfile?.plan || "free");
   const type=currentProfile?.user_type || selectedArea || "jobseeker";
-  const free=isFreePlan(plan);
+  const free=!hasPaidAccess();
+  const isGrowth=plan==="growth" && hasPaidAccess();
+  const isPremium=(plan==="elite" || plan==="rec_premium") && hasPaidAccess();
 
   if(free){
     results.innerHTML=`
@@ -1727,7 +1747,7 @@ function renderLiveResult(r,usage){
       <p><strong>${esc(r.verdict||"Free scan completed.")}</strong></p>
       <div class="limit-box">
         <p>Your Free plan shows score only.</p>
-        <p>Upgrade to Growth or Elite to unlock keyword analysis, detailed gaps, recruiter-style feedback and improvement suggestions.</p>
+        <p>Upgrade to Growth to see the main reasons behind the score, or Elite for deeper recruiter-style strategy.</p>
         <button type="button" class="btn-primary" onclick="showPricingFor('${type}')">Upgrade Plan</button>
       </div>
       ${usage?`<p class="fh-small-note">Monthly usage: ${usage.scans_used} / ${usage.limit===9999?"fair-use unlimited":usage.limit}</p>`:""}
@@ -1738,8 +1758,48 @@ function renderLiveResult(r,usage){
     return;
   }
 
-  const locked=Array.isArray(r.locked_sections)?`<div class="insight warning"><h4>🔒 Locked Sections</h4><ul class="fh-result-list">${r.locked_sections.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>`:"";
-  results.innerHTML=`<div class="score">${Number(r.overall_score||0).toFixed(1)}<span style="font-size:30px;color:#64748b">/10</span></div><p><strong>${esc(r.verdict||"")}</strong></p><p style="color:#334155;line-height:1.75">${esc(r.summary||"")}</p><div class="insights">${listCard("🧭 What The JD Actually Wants™",r.jd_really_wants)}${listCard("✅ What Your CV Already Proves Well™",r.cv_proves_well)}${listCard("⚠️ What Is Missing Or Weak™",r.missing_or_weak,"warning")}${listCard("➕ What To Add To Your CV™",r.what_to_add)}${textCard("🧠 Recruiter Mind Simulation™",r.recruiter_mind_simulation,"purple")}${textCard("⚡ 8 Second Recruiter Test™",r.eight_second_test&&r.eight_second_test.finding,"warning")}${textCard("💼 Commercial Impact Analysis™",r.commercial_impact)}${textCard("👔 Executive Presence™",r.executive_presence&&r.executive_presence.comment)}${textCard("🪞 Human Tone Analysis™",r.human_tone_analysis,"warning")}${listCard("🚩 Why You May NOT Be Shortlisted™",r.why_not_shortlisted,"warning")}${listCard("🔑 Keywords Found",r.keywords_found)}${listCard("❌ Keywords Missing",r.keywords_missing,"warning")}${listCard("⚠️ Recruiter Risk Flags",r.risk_flags,"warning")}${locked}</div><p class="fh-small-note">${esc(r.disclaimer||"FynalHire provides AI-assisted analysis only and does not guarantee employment outcomes.")}</p>${usage?`<p class="fh-small-note">Monthly usage: ${usage.scans_used} / ${usage.limit===9999?"fair-use unlimited":usage.limit}</p>`:""}`;
+  const baseCards=`
+    ${listCard("🧭 What The JD Actually Wants™",r.jd_really_wants)}
+    ${listCard("✅ What Your CV Already Proves Well™",r.cv_proves_well)}
+    ${listCard("⚠️ What Is Missing Or Weak™",r.missing_or_weak,"warning")}
+    ${listCard("🔑 Keywords Found",r.keywords_found)}
+    ${listCard("❌ Keywords Missing",r.keywords_missing,"warning")}
+    ${textCard("🪞 Human Tone Analysis™",r.human_tone_analysis,"warning")}
+  `;
+
+  const eliteCards=`
+    ${listCard("➕ What To Add To Your CV™",r.what_to_add)}
+    ${textCard("🧠 Recruiter Mind Simulation™",r.recruiter_mind_simulation,"purple")}
+    ${textCard("⚡ 8 Second Recruiter Test™",r.eight_second_test&&r.eight_second_test.finding,"warning")}
+    ${textCard("💼 Commercial Impact Analysis™",r.commercial_impact)}
+    ${textCard("👔 Executive Presence™",r.executive_presence&&r.executive_presence.comment)}
+    ${listCard("🚩 Shortlist Risk Factors™",r.why_not_shortlisted,"warning")}
+    ${listCard("⚠️ Recruiter Risk Flags",r.risk_flags,"warning")}
+  `;
+
+  const growthLock=`
+    <div class="insight warning">
+      <h4>🔒 Elite Insights Locked</h4>
+      <p>Upgrade to Elite to unlock What To Add To Your CV™, Recruiter Mind Simulation™, 8 Second Recruiter Test™, Commercial Impact Analysis™, Executive Presence™, and Shortlist Risk Factors™.</p>
+      <button type="button" class="btn-primary" onclick="selectPlan('elite','jobseeker')">Upgrade to Elite</button>
+    </div>
+  `;
+
+  const locked=Array.isArray(r.locked_sections) && isPremium ? `<div class="insight warning"><h4>🔒 Locked Sections</h4><ul class="fh-result-list">${r.locked_sections.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>` : "";
+
+  results.innerHTML=`
+    <div class="score">${Number(r.overall_score||0).toFixed(1)}<span style="font-size:30px;color:#64748b">/10</span></div>
+    <p><strong>${esc(r.verdict||"")}</strong></p>
+    <p style="color:#334155;line-height:1.75">${esc(r.summary||"")}</p>
+    <div class="insights">
+      ${baseCards}
+      ${isPremium ? eliteCards : ""}
+      ${isGrowth ? growthLock : ""}
+      ${locked}
+    </div>
+    <p class="fh-small-note">${esc(r.disclaimer||"FynalHire provides AI-assisted analysis only and does not guarantee employment outcomes.")}</p>
+    ${usage?`<p class="fh-small-note">Monthly usage: ${usage.scans_used} / ${usage.limit===9999?"fair-use unlimited":usage.limit}</p>`:""}
+  `;
   updateTopUserChip();
   results.scrollIntoView({behavior:"smooth"});
 }
