@@ -605,7 +605,15 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
 const FYNALHIRE_SUPABASE_URL="https://yfgedcvrdqkobnjokfch.supabase.co";
 const FYNALHIRE_SUPABASE_KEY="sb_publishable_Jaj4niquWBd9RaOtVlWJBA_HZue607V";
 const FYNALHIRE_SITE_URL=window.location.origin || "https://fynalhire.vercel.app";
-const fynalhireClient=window.supabase.createClient(FYNALHIRE_SUPABASE_URL,FYNALHIRE_SUPABASE_KEY);
+const fynalhireClient=window.supabase.createClient(FYNALHIRE_SUPABASE_URL,FYNALHIRE_SUPABASE_KEY,{
+  auth:{
+    persistSession:true,
+    autoRefreshToken:true,
+    detectSessionInUrl:true,
+    storage:window.localStorage,
+    storageKey:"fynalhire-auth-v1"
+  }
+});
 
 let selectedArea=localStorage.getItem("fh_area")||"jobseeker";
 let userTypePurpose="scan";
@@ -618,6 +626,7 @@ let currentUser=null;
 let currentProfile=null;
 
 const SUBSCRIPTION_CHECKOUT_FUNCTION="create-subscription-checkout";
+const SYNC_SUBSCRIPTION_FUNCTION="sync-my-subscription";
 
 const CHECKOUT_PLAN_MAP={
   growth:"growth",
@@ -661,6 +670,39 @@ async function loadUserProfile(){
   selectedArea=data.user_type || selectedArea || "jobseeker";
   localStorage.setItem("fh_area",selectedArea);
   return currentProfile;
+}
+
+
+function needsStripeSubscriptionSync(){
+  const plan=normalizePlan(currentProfile?.plan || "free");
+  if(isFreePlan(plan)) return false;
+  return !currentProfile?.stripe_customer_id || !currentProfile?.stripe_subscription_id || !effectivePlanExpiry();
+}
+
+async function syncMySubscriptionFromStripe(){
+  try{
+    const {data:sessionData}=await fynalhireClient.auth.getSession();
+    if(!sessionData?.session) return null;
+
+    const {data,error}=await fynalhireClient.functions.invoke(SYNC_SUBSCRIPTION_FUNCTION,{
+      body:{reason:"my_account_refresh"}
+    });
+
+    if(error){
+      console.warn("Stripe subscription sync failed:",error);
+      return null;
+    }
+
+    if(data?.profile){
+      currentProfile=data.profile;
+      return currentProfile;
+    }
+
+    return data || null;
+  }catch(e){
+    console.warn("Stripe subscription sync exception:",e);
+    return null;
+  }
 }
 
 async function saveUserRole(type){
@@ -885,6 +927,12 @@ async function showMyAccount(){
   }
 
   await loadUserProfile();
+
+  if(needsStripeSubscriptionSync()){
+    await syncMySubscriptionFromStripe();
+    await loadUserProfile();
+  }
+
   await updateTopUserChip();
 
   const usage=await getScanUsage();
@@ -1834,6 +1882,10 @@ async function handlePaymentReturn(){
     try{
       await new Promise(resolve=>setTimeout(resolve, i===0 ? 2500 : 2000));
       await refreshAuth();
+      await loadUserProfile();
+      if(needsStripeSubscriptionSync()){
+        await syncMySubscriptionFromStripe();
+      }
       await loadUserProfile();
       await updateTopUserChip();
 
