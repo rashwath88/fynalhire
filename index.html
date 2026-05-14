@@ -685,7 +685,7 @@ async function routeAfterLogin(){
     return;
   }
 
-  selectedArea=profile.user_type;
+  selectedArea=profile.user_type || selectedArea;
   localStorage.setItem("fh_area",selectedArea);
   await updateTopUserChip();
 
@@ -695,13 +695,17 @@ async function routeAfterLogin(){
     pendingAction=null;
     pendingPlan=null;
     completePlanSelection(planToResume,areaToResume);
-  }else if(pendingAction==="enter_area"){
+    return;
+  }
+
+  if(pendingAction==="enter_area"){
     pendingAction=null;
     pendingPlan=null;
     enterArea(selectedArea);
-  }else{
-    enterArea(selectedArea);
+    return;
   }
+
+  enterArea(selectedArea);
 }
 
 
@@ -1172,7 +1176,8 @@ async function selectPlan(plan,type){
   pendingAction="select_plan";
 
   await getCurrentUser();
-  if(!currentUser || !signedIn){
+
+  if(!currentUser){
     if(plan==="free" || plan==="rec_free"){
       requireLoginForScan(type);
     }else{
@@ -1181,16 +1186,29 @@ async function selectPlan(plan,type){
     return;
   }
 
+  signedIn=true;
+  await loadUserProfile();
+  await updateTopUserChip();
+
   completePlanSelection(plan,type);
 }
 function completePlanSelection(plan,type){
-  if(plan==="free"||plan==="rec_free"){enterArea(type);return;}
-  const url=STRIPE_LINKS[plan];
-  if(!url || url.includes("PASTE_STRIPE")){
-    alert("Stripe checkout link for this plan is not connected yet. Once Stripe products are created, this button will take users to Stripe Checkout.");
+  selectedArea=type || selectedArea || "jobseeker";
+  localStorage.setItem("fh_area",selectedArea);
+
+  if(plan==="free" || plan==="rec_free"){
+    enterArea(type);
     return;
   }
-  window.location.href=url;
+
+  const url=STRIPE_LINKS[plan];
+
+  if(!url || url.includes("PASTE_STRIPE")){
+    alert("Stripe checkout link for this plan is not connected yet.");
+    return;
+  }
+
+  window.location.assign(url);
 }
 
 function resetIdle(){
