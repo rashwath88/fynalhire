@@ -451,7 +451,7 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
       <div class="account-card">
         <h3>Free Scans</h3>
         <div class="account-value" id="accountScans">—</div>
-        <p class="account-muted">Free Job Seekers get 3 scans/month. Recruiter Free users get 2 scans/month.</p>
+        <p class="account-muted" id="accountScansNote">Free Job Seekers get 3 scans/month. Recruiter Free users get 2 scans/month.</p>
       </div>
       <div class="account-card">
         <h3>Plan Expiry</h3>
@@ -953,12 +953,18 @@ async function showMyAccount(){
   if(isFreePlan(plan)){
     document.getElementById("accountPlanNote").textContent=`Account type: ${type==="recruiter" ? "Recruiter" : "Job Seeker"} · Status: Free · Created: ${created}`;
     document.getElementById("accountScans").textContent=`${usage.left} / ${usage.limit}`;
+    const scansNote=document.getElementById("accountScansNote");
+    if(scansNote) scansNote.textContent=type==="recruiter" ? "Recruiter Free includes 2 scans per month. Your allowance resets monthly." : "Free Job Seekers get 3 scans per month. Your allowance resets monthly.";
     document.getElementById("accountExpiry").textContent="Not applicable";
     document.getElementById("accountExpiryNote").textContent="Free plans do not have a subscription expiry. Free scan allowance resets monthly.";
     document.getElementById("accountUpgradeBtn").style.display="inline-block";
   }else{
-    document.getElementById("accountPlanNote").textContent=`Status: ${active ? "Active" : status} · Stripe customer: ${customerId} · Subscription: ${subscriptionId}`;
+    const paidPlanLabel=planLabel(plan);
+    const billingStatus=active ? "Active" : status.charAt(0).toUpperCase()+status.slice(1);
+    document.getElementById("accountPlanNote").textContent=`Billing: ${billingStatus} · Subscription: Monthly renewal`;
     document.getElementById("accountScans").textContent="Unlimited";
+    const scansNote=document.getElementById("accountScansNote");
+    if(scansNote) scansNote.textContent=`Unlimited scans are included with your ${paidPlanLabel} plan.`;
     document.getElementById("accountExpiry").textContent=expiryRaw ? expiry : "Syncing";
     if(!active){
       document.getElementById("accountExpiryNote").textContent="Your paid access is not active or the subscription period has ended. Please renew or contact support.";
