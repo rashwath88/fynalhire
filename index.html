@@ -633,10 +633,12 @@ let userTypePurpose="scan";
 let pendingAction=null;
 let pendingPlan=null;
 let signedIn=false;
-let idleSeconds=900;
+let idleSeconds=IDLE_TIMEOUT_SECONDS;
 let idleInterval=null;
 let currentUser=null;
 let currentProfile=null;
+const IDLE_TIMEOUT_SECONDS=3600; // Keep users signed in for up to 60 minutes of inactivity.
+const IDLE_WARNING_SECONDS=120;
 let suppressNextLogoutNotice=false;
 let pendingSignupRole=localStorage.getItem("fh_pending_signup_role")||"";
 
@@ -660,9 +662,46 @@ function closeRoleSetup(){
   if(modal) modal.style.display="none";
 }
 
+async function ensureFreshSession(){
+  // Try to recover/refresh the persisted Supabase session before deciding the user is logged out.
+  try{
+    const sessionResult=await withTimeout(
+      fynalhireClient.auth.getSession(),
+      3500,
+      "Session lookup timed out"
+    );
+    if(sessionResult?.data?.session){
+      signedIn=true;
+      currentUser=sessionResult.data.session.user;
+      return sessionResult.data.session;
+    }
+  }catch(e){
+    console.warn("Session lookup failed, trying refresh:",e);
+  }
+
+  try{
+    const refreshResult=await withTimeout(
+      fynalhireClient.auth.refreshSession(),
+      5000,
+      "Session refresh timed out"
+    );
+    if(refreshResult?.data?.session){
+      signedIn=true;
+      currentUser=refreshResult.data.session.user;
+      return refreshResult.data.session;
+    }
+  }catch(e){
+    console.warn("Session refresh failed:",e);
+  }
+
+  currentUser=null;
+  signedIn=false;
+  return null;
+}
+
 async function getCurrentUser(){
-  const {data}=await fynalhireClient.auth.getSession();
-  currentUser=data && data.session ? data.session.user : null;
+  const session=await ensureFreshSession();
+  currentUser=session ? session.user : null;
   return currentUser;
 }
 
@@ -948,7 +987,10 @@ async function updateTopUserChip(){
 async function showMyAccount(){
   await getCurrentUser();
   if(!currentUser){
-    openAuthWithMessage("Please log in to view your account.","Log in required");
+    await refreshAuth();
+  }
+  if(!currentUser){
+    showLoggedOutNotice("Please log in again to view your account.",true);
     return;
   }
 
@@ -1656,7 +1698,7 @@ async function completePlanSelection(plan,type){
 
 function resetIdle(){
   if(!signedIn)return;
-  idleSeconds=900;
+  idleSeconds=IDLE_TIMEOUT_SECONDS;
   document.getElementById("securityBar").classList.remove("show");
   updateIdleDisplay();
 }
@@ -1664,11 +1706,11 @@ function updateIdleDisplay(){
   const m=Math.floor(idleSeconds/60),s=idleSeconds%60;
   document.getElementById("idleTimer").textContent=`${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
   const bar=document.getElementById("securityBar");
-  if(signedIn && idleSeconds<=120){bar.classList.add("show");}else{bar.classList.remove("show");}
+  if(signedIn && idleSeconds<=IDLE_WARNING_SECONDS){bar.classList.add("show");}else{bar.classList.remove("show");}
 }
 function startIdleTimer(){
   stopIdleTimer();
-  idleSeconds=900;
+  idleSeconds=IDLE_TIMEOUT_SECONDS;
   updateIdleDisplay();
   idleInterval=setInterval(async()=>{
     idleSeconds--;
@@ -1823,6 +1865,22 @@ async function getAccessTokenForProtectedAction(){
     if(token && isJwtStillValid(token)) return token;
   }catch(e){
     console.warn("Fast session check failed:",e);
+  }
+
+  try{
+    const refreshed=await withTimeout(
+      fynalhireClient.auth.refreshSession(),
+      5000,
+      "Session refresh timed out"
+    );
+    const token=refreshed?.data?.session?.access_token;
+    if(token && isJwtStillValid(token)){
+      signedIn=true;
+      currentUser=refreshed.data.session.user;
+      return token;
+    }
+  }catch(e){
+    console.warn("Token refresh failed:",e);
   }
 
   return null;
@@ -2248,6 +2306,14 @@ function cleanPaymentUrl(){
   }catch(e){}
 }
 
+window.addEventListener("focus",()=>{
+  ensureFreshSession().then(()=>updateTopUserChip()).catch(()=>{});
+});
+document.addEventListener("visibilitychange",()=>{
+  if(!document.hidden){
+    ensureFreshSession().then(()=>updateTopUserChip()).catch(()=>{});
+  }
+});
 
 window.addEventListener("load",async()=>{
   console.log("FynalHire compliance footer build loaded.");
