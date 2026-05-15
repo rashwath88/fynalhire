@@ -1023,75 +1023,117 @@ async function updateTopUserChip(){
 }
 
 async function showMyAccount(){
-  await getCurrentUser();
-  if(!currentUser){
-    await refreshAuth();
-  }
-  if(!currentUser){
-    showLoggedOutNotice("Please log in again to view your account.",true);
-    return;
-  }
+  // Open the page immediately so the My Account tab never feels dead.
+  showPage("account");
 
-  await loadUserProfile();
+  const setText=(id,value)=>{
+    const el=document.getElementById(id);
+    if(el) el.textContent=value;
+  };
+  const setDisplay=(id,value)=>{
+    const el=document.getElementById(id);
+    if(el) el.style.display=value;
+  };
 
-  if(needsStripeSubscriptionSync()){
-    await syncMySubscriptionFromStripe();
+  setText("accountName","Loading...");
+  setText("accountEmail","Checking your secure session...");
+  setText("accountPlan","Loading...");
+  setText("accountPlanNote","Loading your account details...");
+  setText("accountScans","—");
+  setText("accountScansNote","Checking scan allowance...");
+  setText("accountExpiry","—");
+  setText("accountExpiryNote","Checking subscription status...");
+  setDisplay("accountCancelBtn","none");
+
+  try{
+    await ensureFreshSession();
+    if(!currentUser){
+      await refreshAuth();
+    }
+
+    if(!currentUser){
+      setText("accountName","Session ended");
+      setText("accountEmail","Please log in again to view your account.");
+      setText("accountPlan","—");
+      setText("accountPlanNote","Your session is not active.");
+      setText("accountScans","—");
+      setText("accountScansNote","Log in to view scan balance.");
+      setText("accountExpiry","—");
+      setText("accountExpiryNote","Log in to view subscription details.");
+      showLoggedOutNotice("Please log in again to view your account.",true);
+      return;
+    }
+
     await loadUserProfile();
-  }
 
-  await updateTopUserChip();
+    // Do not allow Stripe sync to block opening My Account.
+    if(needsStripeSubscriptionSync()){
+      syncMySubscriptionFromStripe()
+        .then(()=>loadUserProfile())
+        .then(()=>showMyAccount())
+        .catch(e=>console.warn("Background subscription sync failed:",e));
+    }
 
-  const usage=await getScanUsage();
-  const plan=normalizePlan(currentProfile?.plan || (selectedArea==="recruiter" ? "rec_free" : "free"));
-  const type=currentProfile?.user_type || selectedArea || "jobseeker";
-  const created=currentUser?.created_at ? new Date(currentUser.created_at).toLocaleDateString() : "—";
-  const status=String(effectivePlanStatus() || (isFreePlan(plan)?"free":"active")).toLowerCase();
-  const expiryRaw=effectivePlanExpiry();
-  const expiry=formatFynalHireDate(expiryRaw);
-  const active=isPlanCurrentlyActive();
-  const customerId=currentProfile?.stripe_customer_id || "Not linked yet";
-  const subscriptionId=currentProfile?.stripe_subscription_id || "Not linked yet";
+    await updateTopUserChip();
 
-  document.getElementById("accountName").textContent=getFirstNameFromUser();
-  document.getElementById("accountEmail").textContent=currentUser.email || currentProfile?.email || "—";
-  document.getElementById("accountPlan").textContent=planLabel(plan);
+    const usage=await getScanUsage();
+    const plan=normalizePlan(currentProfile?.plan || (selectedArea==="recruiter" ? "rec_free" : "free"));
+    const type=currentProfile?.user_type || selectedArea || "jobseeker";
+    const created=currentUser?.created_at ? new Date(currentUser.created_at).toLocaleDateString() : "—";
+    const status=String(effectivePlanStatus() || (isFreePlan(plan)?"free":"active")).toLowerCase();
+    const expiryRaw=effectivePlanExpiry();
+    const expiry=formatFynalHireDate(expiryRaw);
+    const active=isPlanCurrentlyActive();
 
-  const cancelBtn=document.getElementById("accountCancelBtn");
+    setText("accountName",getFirstNameFromUser());
+    setText("accountEmail",currentUser.email || currentProfile?.email || "—");
+    setText("accountPlan",planLabel(plan));
 
-  if(isFreePlan(plan)){
-    document.getElementById("accountPlanNote").textContent=`Account type: ${type==="recruiter" ? "Recruiter" : "Job Seeker"} · Status: Free · Created: ${created}`;
-    document.getElementById("accountScans").textContent=`${usage.left} / ${usage.limit}`;
-    const scansNote=document.getElementById("accountScansNote");
-    if(scansNote) scansNote.textContent=type==="recruiter" ? "Recruiter Free includes 2 scans per month. Your allowance resets monthly." : "Free Job Seekers get 3 scans per month. Your allowance resets monthly.";
-    document.getElementById("accountExpiry").textContent="Not applicable";
-    document.getElementById("accountExpiryNote").textContent="Free plans do not have a subscription expiry. Free scan allowance resets monthly.";
-    document.getElementById("accountUpgradeBtn").style.display="inline-block";
-    if(cancelBtn) cancelBtn.style.display="none";
-  }else{
-    const paidPlanLabel=planLabel(plan);
-    const cancelling=status==="cancel_at_period_end" || status==="active_until_expiry";
-    const billingStatus=cancelling ? "Cancels at period end" : (active ? "Active" : status.charAt(0).toUpperCase()+status.slice(1));
-    document.getElementById("accountPlanNote").textContent=`Billing: ${billingStatus} · Subscription: ${cancelling ? "No further renewal" : "Monthly renewal"}`;
-    document.getElementById("accountScans").textContent="Unlimited";
-    const scansNote=document.getElementById("accountScansNote");
-    if(scansNote) scansNote.textContent=`Unlimited scans are included with your ${paidPlanLabel} plan.`;
-    document.getElementById("accountExpiry").textContent=expiryRaw ? expiry : "Syncing";
-    if(!active){
-      document.getElementById("accountExpiryNote").textContent="Your paid access is not active or the subscription period has ended. Please renew or contact support.";
-      document.getElementById("accountUpgradeBtn").style.display="inline-block";
-      if(cancelBtn) cancelBtn.style.display="none";
-    }else if(cancelling){
-      document.getElementById("accountExpiryNote").textContent=expiryRaw ? `Your renewal is cancelled. Your plan remains active until ${expiry}.` : "Your renewal is cancelled. Your plan remains active until the current paid period ends.";
-      document.getElementById("accountUpgradeBtn").style.display=(plan==="elite" || plan==="rec_premium") ? "none" : "inline-block";
+    const cancelBtn=document.getElementById("accountCancelBtn");
+
+    if(isFreePlan(plan)){
+      setText("accountPlanNote",`Account type: ${type==="recruiter" ? "Recruiter" : "Job Seeker"} · Status: Free · Created: ${created}`);
+      setText("accountScans",`${usage.left} / ${usage.limit}`);
+      setText("accountScansNote",type==="recruiter" ? "Recruiter Free includes 2 scans per month. Your allowance resets monthly." : "Free Job Seekers get 3 scans per month. Your allowance resets monthly.");
+      setText("accountExpiry","Not applicable");
+      setText("accountExpiryNote","Free plans do not have a subscription expiry. Free scan allowance resets monthly.");
+      setDisplay("accountUpgradeBtn","inline-block");
       if(cancelBtn) cancelBtn.style.display="none";
     }else{
-      document.getElementById("accountExpiryNote").textContent=expiryRaw ? "Your subscription is active. This is your next renewal / validity date." : "Your subscription is active. Renewal date is still being synced from Stripe.";
-      document.getElementById("accountUpgradeBtn").style.display=(plan==="elite" || plan==="rec_premium") ? "none" : "inline-block";
-      if(cancelBtn) cancelBtn.style.display=currentProfile?.stripe_subscription_id ? "inline-block" : "none";
-    }
-  }
+      const paidPlanLabel=planLabel(plan);
+      const cancelling=status==="cancel_at_period_end" || status==="active_until_expiry";
+      const billingStatus=cancelling ? "Cancels at period end" : (active ? "Active" : status.charAt(0).toUpperCase()+status.slice(1));
+      setText("accountPlanNote",`Billing: ${billingStatus} · Subscription: ${cancelling ? "No further renewal" : "Monthly renewal"}`);
+      setText("accountScans","Unlimited");
+      setText("accountScansNote",`Unlimited scans are included with your ${paidPlanLabel} plan.`);
+      setText("accountExpiry",expiryRaw ? expiry : "Syncing");
 
-  showPage("account");
+      if(!active){
+        setText("accountExpiryNote","Your paid access is not active or the subscription period has ended. Please renew or contact support.");
+        setDisplay("accountUpgradeBtn","inline-block");
+        if(cancelBtn) cancelBtn.style.display="none";
+      }else if(cancelling){
+        setText("accountExpiryNote",expiryRaw ? `Your renewal is cancelled. Your plan remains active until ${expiry}.` : "Your renewal is cancelled. Your plan remains active until the current paid period ends.");
+        setDisplay("accountUpgradeBtn",(plan==="elite" || plan==="rec_premium") ? "none" : "inline-block");
+        if(cancelBtn) cancelBtn.style.display="none";
+      }else{
+        setText("accountExpiryNote",expiryRaw ? "Your subscription is active. This is your next renewal / validity date." : "Your subscription is active. Renewal date is still being synced from Stripe.");
+        setDisplay("accountUpgradeBtn",(plan==="elite" || plan==="rec_premium") ? "none" : "inline-block");
+        if(cancelBtn) cancelBtn.style.display=currentProfile?.stripe_subscription_id ? "inline-block" : "none";
+      }
+    }
+  }catch(e){
+    console.error("My Account failed:",e);
+    setText("accountName","Could not load account");
+    setText("accountEmail","Please refresh or log in again.");
+    setText("accountPlan","—");
+    setText("accountPlanNote","Account details could not be loaded.");
+    setText("accountScans","—");
+    setText("accountScansNote","Scan balance could not be loaded.");
+    setText("accountExpiry","—");
+    setText("accountExpiryNote","Subscription details could not be loaded.");
+    showGlobalNotice("My Account could not load. Please refresh or log in again.","warning");
+  }
 }
 
 async function cancelSubscriptionAtPeriodEnd(){
