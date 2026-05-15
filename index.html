@@ -371,7 +371,7 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
     <h1>Know exactly where you stand before you apply or shortlist</h1>
     <p>FynalHire analyzes recruiter psychology, hiring signals, leadership evidence, commercial impact and CV positioning to improve shortlist probability and help recruiters make faster, lower-risk hiring decisions.</p>
     <div class="hero-actions">
-      <button type="button" class="btn-primary" onclick="openUserTypeModal('scan')">Start Scan →</button>
+      <button type="button" class="btn-primary" onclick="startScanFromAnywhere(true)">Start Scan →</button>
       <button type="button" class="btn-outline" onclick="openUserTypeModal('pricing')">Choose Your Plan</button>
     </div>
   </div>
@@ -463,8 +463,13 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
         <p class="account-muted" id="accountExpiryNote">Paid plans show the next renewal / validity date after Stripe sync.</p>
       </div>
     </div>
+    <div id="scanHistorySection" class="account-card" style="margin-top:22px;display:none">
+      <h3>Recent Scans</h3>
+      <p class="account-muted" id="scanHistoryNote">Your recent scan history appears here for paid plans.</p>
+      <div id="scanHistoryList" style="display:grid;gap:12px;margin-top:14px"></div>
+    </div>
     <div style="margin-top:22px;display:flex;gap:12px;flex-wrap:wrap;justify-content:center">
-      <button type="button" class="btn-primary" onclick="enterArea(selectedArea)">Start Scan</button>
+      <button type="button" class="btn-primary" onclick="startScanFromAnywhere(false)">Start Scan</button>
       <button type="button" class="btn-outline" id="accountUpgradeBtn" onclick="showPricingFor(selectedArea)">Upgrade Plan</button>
       <button type="button" class="btn-danger" id="accountCancelBtn" style="display:none" onclick="cancelSubscriptionAtPeriodEnd()">Cancel Renewal</button>
     </div>
@@ -481,7 +486,7 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
       <div class="card">
         <h2 id="dashScanTitle">Scan CV</h2>
         <p id="dashScanText">Start a new scan.</p>
-        <button type="button" class="btn-primary" onclick="enterArea(selectedArea)">Scan CV</button>
+        <button type="button" class="btn-primary" onclick="startScanFromAnywhere(true)">Scan CV</button>
       </div>
       <div class="card" id="dashUpgradeCard">
         <h2>Upgrade</h2>
@@ -1091,6 +1096,7 @@ async function showMyAccount(){
     }
   }
 
+  renderScanHistory();
   showPage("account");
 }
 
@@ -1148,6 +1154,152 @@ async function cancelSubscriptionAtPeriodEnd(){
     if(btn){btn.disabled=false;btn.textContent=oldText;}
   }
 }
+
+
+function resetScannerForNewScan(){
+  try{
+    const jdUrl=document.getElementById("jdUrl");
+    const jd=document.getElementById("jdText");
+    const cv=document.getElementById("cvText");
+    const file=document.getElementById("cvFile");
+    const uploadText=document.getElementById("uploadText");
+    const uploadNote=document.getElementById("uploadNote");
+    const results=document.getElementById("results");
+    const status=document.getElementById("analysisStatus");
+    const debug=document.getElementById("analyzeDebug");
+    const btn=document.getElementById("analyzeBtn");
+
+    if(jdUrl) jdUrl.value="";
+    if(jd) jd.value="";
+    if(cv) cv.value="";
+    if(file) file.value="";
+    if(uploadText) uploadText.textContent="📄 Upload CV — PDF / Word / TXT";
+    if(uploadNote) uploadNote.textContent="TXT can be read now. PDF/Word extraction will be completed through backend parser.";
+    if(results){results.style.display="none";results.innerHTML="";}
+    if(status){status.style.display="none";status.innerHTML="";}
+    if(debug){debug.style.display="none";debug.textContent="";}
+    if(btn){btn.disabled=false;btn.textContent="Analyze CV";}
+  }catch(e){
+    console.warn("Could not reset scanner:",e);
+  }
+}
+
+function openScannerWorkspace(area){
+  selectedArea=area || selectedArea || "jobseeker";
+  localStorage.setItem("fh_area",selectedArea);
+
+  const appTitle=document.getElementById("appTitle");
+  const appSub=document.getElementById("appSub");
+  const cvHeading=document.getElementById("cvHeading");
+
+  if(appTitle) appTitle.textContent=selectedArea==="recruiter"?"Recruiter Screening Area":"Job Seeker CV Scanner";
+  if(appSub) appSub.textContent=selectedArea==="recruiter"?"Compare candidates against the role requirement, surface shortlist risks and prepare a faster hiring decision.":"Upload or paste your CV and compare it with a job description.";
+  if(cvHeading) cvHeading.textContent=selectedArea==="recruiter"?"Candidate CV":"CV / Resume";
+
+  showPage("app");
+}
+
+async function startScanFromAnywhere(clearForm=true){
+  try{
+    resetIdle();
+  }catch(_){}
+
+  const storedArea=localStorage.getItem("fh_area");
+  let area=currentProfile?.user_type || storedArea || selectedArea || "jobseeker";
+
+  const hasStoredToken=typeof getStoredSupabaseAccessTokenSafe==="function" && !!getStoredSupabaseAccessTokenSafe();
+  const authBtn=document.getElementById("authTopBtn");
+  const looksSignedIn=signedIn || !!currentUser || hasStoredToken || (authBtn && String(authBtn.textContent||"").toLowerCase().includes("sign out"));
+
+  if(!looksSignedIn){
+    userTypePurpose="scan";
+    document.getElementById("userTypeModal").style.display="flex";
+    return;
+  }
+
+  if(clearForm) resetScannerForNewScan();
+  openScannerWorkspace(area);
+
+  // Refresh auth/profile in the background only. Navigation must never wait on this.
+  Promise.resolve()
+    .then(()=>ensureFreshSession())
+    .then(()=>loadUserProfile())
+    .then(profile=>{
+      if(profile?.user_type){
+        openScannerWorkspace(profile.user_type);
+      }
+      return updateTopUserChip();
+    })
+    .catch(e=>console.warn("Background scan session refresh failed:",e));
+}
+
+function fynalhireScanHistoryKey(){
+  const email=(currentUser?.email || currentProfile?.email || "anonymous").toLowerCase();
+  return "fynalhire_scan_history_"+email;
+}
+
+function saveScanHistoryEntry(jd,cv,result,usage){
+  try{
+    const plan=normalizePlan(currentProfile?.plan || "free");
+    const type=currentProfile?.user_type || selectedArea || "jobseeker";
+    if(isFreePlan(plan)) return;
+
+    const key=fynalhireScanHistoryKey();
+    const existing=JSON.parse(localStorage.getItem(key)||"[]");
+    const firstLine=(String(jd||"").split(/\n+/).map(x=>x.trim()).filter(Boolean)[0]||"Job description scan").slice(0,90);
+    const item={
+      id:String(Date.now()),
+      date:new Date().toISOString(),
+      title:firstLine,
+      score:Number(result?.overall_score||0),
+      verdict:String(result?.verdict||"").slice(0,140),
+      plan,
+      type
+    };
+    existing.unshift(item);
+    localStorage.setItem(key,JSON.stringify(existing.slice(0,12)));
+  }catch(e){
+    console.warn("Could not save scan history:",e);
+  }
+}
+
+function renderScanHistory(){
+  const section=document.getElementById("scanHistorySection");
+  const list=document.getElementById("scanHistoryList");
+  const note=document.getElementById("scanHistoryNote");
+  if(!section || !list) return;
+
+  const plan=normalizePlan(currentProfile?.plan || "free");
+  const paid=!isFreePlan(plan) && isPlanCurrentlyActive();
+
+  if(!paid){
+    section.style.display="none";
+    list.innerHTML="";
+    return;
+  }
+
+  let items=[];
+  try{items=JSON.parse(localStorage.getItem(fynalhireScanHistoryKey())||"[]");}catch(_){items=[];}
+
+  section.style.display="block";
+  if(note) note.textContent="Recent scan history for this browser. Full cloud history can be added as the next backend step.";
+
+  if(!items.length){
+    list.innerHTML='<p class="account-muted">No recent scans saved on this browser yet. Run a scan and it will appear here.</p>';
+    return;
+  }
+
+  list.innerHTML=items.map(item=>{
+    const d=new Date(item.date);
+    const date=Number.isNaN(d.getTime())?"Recent":d.toLocaleString(undefined,{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
+    return `<div style="border:1px solid #dbeafe;border-radius:14px;padding:14px;background:#f8fbff">
+      <div style="font-weight:900;color:#0f172a">${esc(item.title||"CV scan")}</div>
+      <div class="account-muted" style="margin-top:6px">Score: <strong>${Number(item.score||0).toFixed(1)}/10</strong> · ${esc(date)}</div>
+      ${item.verdict?`<div class="account-muted" style="margin-top:6px">${esc(item.verdict)}</div>`:""}
+    </div>`;
+  }).join("");
+}
+
 
 function showPage(page){
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
@@ -2131,6 +2283,7 @@ async function analyzeWithFynalHireAPI(event){
 
     setDebug("Analysis completed.");
     renderLiveResult(data.result,data.usage);
+    saveScanHistoryEntry(jd,cv,data.result,data.usage);
     // Refresh account chip after rendering, without blocking result display.
     loadUserProfile().then(()=>updateTopUserChip()).catch(e=>console.warn("Post-analysis profile refresh failed:",e));
 
@@ -2347,283 +2500,6 @@ function cleanPaymentUrl(){
     window.history.replaceState({},document.title,cleanUrl);
   }catch(e){}
 }
-
-
-/* ==== FYNALHIRE STABILITY OVERRIDE: navigation + My Account must never block the app ==== */
-
-function fhTimeout(promise, ms, label){
-  return Promise.race([
-    promise,
-    new Promise((_, reject)=>setTimeout(()=>reject(new Error(label || "Request timed out")), ms))
-  ]);
-}
-
-function fhSetText(id, value){
-  const el=document.getElementById(id);
-  if(el) el.textContent=value;
-}
-
-function fhSetDisplay(id, value){
-  const el=document.getElementById(id);
-  if(el) el.style.display=value;
-}
-
-function fhGetKnownAccountType(){
-  return currentProfile?.user_type || localStorage.getItem("fh_area") || selectedArea || "jobseeker";
-}
-
-async function fhQuickSession(){
-  try{
-    const sessionResult=await fhTimeout(fynalhireClient.auth.getSession(), 2200, "Session check timed out");
-    if(sessionResult?.data?.session){
-      signedIn=true;
-      currentUser=sessionResult.data.session.user;
-      return sessionResult.data.session;
-    }
-  }catch(e){
-    console.warn("Quick session check failed:", e);
-  }
-
-  try{
-    const stored=typeof getStoredSupabaseAccessTokenSafe==="function" ? getStoredSupabaseAccessTokenSafe() : null;
-    if(stored){
-      const userResult=await fhTimeout(fynalhireClient.auth.getUser(stored), 2200, "Stored user check timed out");
-      if(userResult?.data?.user){
-        signedIn=true;
-        currentUser=userResult.data.user;
-        return {user:currentUser, access_token:stored};
-      }
-    }
-  }catch(e){
-    console.warn("Stored session recovery failed:", e);
-  }
-
-  return null;
-}
-
-async function fhQuickProfile(){
-  try{
-    const session=await fhQuickSession();
-    if(!session?.user && !currentUser) return currentProfile || null;
-
-    const userId=(session?.user || currentUser).id;
-    const {data,error}=await fhTimeout(
-      fynalhireClient
-        .from("profiles")
-        .select("id,email,user_type,plan,subscription_status,subscription_current_period_start,subscription_current_period_end,stripe_customer_id,stripe_subscription_id,stripe_price_id,plan_started_at,plan_expires_at,plan_status,created_at")
-        .eq("id",userId)
-        .single(),
-      4500,
-      "Profile load timed out"
-    );
-
-    if(error) throw error;
-    if(data){
-      currentProfile=data;
-      selectedArea=data.user_type || selectedArea || "jobseeker";
-      localStorage.setItem("fh_area", selectedArea);
-      return data;
-    }
-  }catch(e){
-    console.warn("Quick profile load failed:", e);
-  }
-  return currentProfile || null;
-}
-
-function fhRenderAccountFromState(profile, usage){
-  const user=currentUser || {};
-  const fallbackType=fhGetKnownAccountType();
-  const plan=normalizePlan(profile?.plan || (fallbackType==="recruiter" ? "rec_free" : "free"));
-  const type=profile?.user_type || fallbackType || "jobseeker";
-  const created=user?.created_at ? new Date(user.created_at).toLocaleDateString() : "—";
-  const status=String((profile?.plan_status || profile?.subscription_status || (isFreePlan(plan) ? "free" : "active")) || "").toLowerCase();
-  const expiryRaw=profile?.plan_expires_at || profile?.subscription_current_period_end || null;
-  const expiry=formatFynalHireDate(expiryRaw);
-  const active=(()=> {
-    if(isFreePlan(plan)) return true;
-    if(["cancelled","expired","refunded","disputed","past_due","unpaid","incomplete","incomplete_expired"].includes(status)) return false;
-    if(expiryRaw && new Date(expiryRaw).getTime() < Date.now()) return false;
-    return true;
-  })();
-
-  fhSetText("accountName", getFirstNameFromUser());
-  fhSetText("accountEmail", user.email || profile?.email || "—");
-  fhSetText("accountPlan", planLabel(plan));
-
-  const cancelBtn=document.getElementById("accountCancelBtn");
-
-  if(isFreePlan(plan)){
-    fhSetText("accountPlanNote", `Account type: ${type==="recruiter" ? "Recruiter" : "Job Seeker"} · Status: Free · Created: ${created}`);
-    const limit=usage?.limit ?? (type==="recruiter" ? 2 : 3);
-    const left=usage?.left ?? limit;
-    fhSetText("accountScans", `${left} / ${limit}`);
-    fhSetText("accountScansNote", type==="recruiter" ? "Recruiter Free includes 2 scans per month. Your allowance resets monthly." : "Free Job Seekers get 3 scans per month. Your allowance resets monthly.");
-    fhSetText("accountExpiry", "Not applicable");
-    fhSetText("accountExpiryNote", "Free plans do not have a subscription expiry. Free scan allowance resets monthly.");
-    fhSetDisplay("accountUpgradeBtn", "inline-block");
-    if(cancelBtn) cancelBtn.style.display="none";
-    return;
-  }
-
-  const paidPlanLabel=planLabel(plan);
-  const cancelling=status==="cancel_at_period_end" || status==="active_until_expiry";
-  const billingStatus=cancelling ? "Cancels at period end" : (active ? "Active" : (status ? status.charAt(0).toUpperCase()+status.slice(1) : "Active"));
-
-  fhSetText("accountPlanNote", `Billing: ${billingStatus} · Subscription: ${cancelling ? "No further renewal" : "Monthly renewal"}`);
-  fhSetText("accountScans", "Unlimited");
-  fhSetText("accountScansNote", `Unlimited scans are included with your ${paidPlanLabel} plan.`);
-  fhSetText("accountExpiry", expiryRaw ? expiry : "Syncing");
-
-  if(!active){
-    fhSetText("accountExpiryNote", "Your paid access is not active or the subscription period has ended. Please renew or contact support.");
-    fhSetDisplay("accountUpgradeBtn", "inline-block");
-    if(cancelBtn) cancelBtn.style.display="none";
-  }else if(cancelling){
-    fhSetText("accountExpiryNote", expiryRaw ? `Your renewal is cancelled. Your plan remains active until ${expiry}.` : "Your renewal is cancelled. Your plan remains active until the current paid period ends.");
-    fhSetDisplay("accountUpgradeBtn", (plan==="elite" || plan==="rec_premium") ? "none" : "inline-block");
-    if(cancelBtn) cancelBtn.style.display="none";
-  }else{
-    fhSetText("accountExpiryNote", expiryRaw ? "Your subscription is active. This is your next renewal / validity date." : "Your subscription is active. Renewal date is still being synced from Stripe.");
-    fhSetDisplay("accountUpgradeBtn", (plan==="elite" || plan==="rec_premium") ? "none" : "inline-block");
-    if(cancelBtn) cancelBtn.style.display=profile?.stripe_subscription_id ? "inline-block" : "none";
-  }
-}
-
-async function showMyAccount(){
-  // Never allow My Account to block the rest of the app.
-  showPage("account");
-
-  fhSetText("accountName", "Loading...");
-  fhSetText("accountEmail", "Checking secure session...");
-  fhSetText("accountPlan", "Loading...");
-  fhSetText("accountPlanNote", "Loading account details...");
-  fhSetText("accountScans", "—");
-  fhSetText("accountScansNote", "Checking scan allowance...");
-  fhSetText("accountExpiry", "—");
-  fhSetText("accountExpiryNote", "Checking subscription status...");
-
-  const session=await fhQuickSession();
-  if(!session?.user && !currentUser){
-    fhSetText("accountName", "Not signed in");
-    fhSetText("accountEmail", "Please log in again to view your account.");
-    fhSetText("accountPlan", "—");
-    fhSetText("accountPlanNote", "Session not found.");
-    fhSetText("accountScans", "—");
-    fhSetText("accountScansNote", "Log in to see scan allowance.");
-    fhSetText("accountExpiry", "—");
-    fhSetText("accountExpiryNote", "Log in to see subscription status.");
-    showLoggedOutNotice("Please log in again to view your account.", true);
-    return;
-  }
-
-  const profile=await fhQuickProfile();
-  try{
-    if(profile && needsStripeSubscriptionSync()){
-      await fhTimeout(syncMySubscriptionFromStripe(), 4500, "Subscription sync timed out");
-      await fhQuickProfile();
-    }
-  }catch(e){
-    console.warn("Subscription sync skipped:", e);
-  }
-
-  let usage=null;
-  try{
-    if(isFreePlan(currentProfile?.plan || "free")){
-      usage=await fhTimeout(getScanUsage(), 3500, "Usage load timed out");
-    }
-  }catch(e){
-    console.warn("Usage load skipped:", e);
-  }
-
-  fhRenderAccountFromState(currentProfile || profile, usage);
-  updateTopUserChip().catch(e=>console.warn("Top chip refresh skipped:", e));
-}
-
-function enterArea(area){
-  // Navigate immediately. Session/profile refresh happens in the background.
-  const knownType=currentProfile?.user_type || selectedArea || area || "jobseeker";
-  if(currentProfile?.user_type && area && area!==currentProfile.user_type){
-    guardRoleAccess(area,"area access").catch(()=>{});
-    return;
-  }
-
-  selectedArea=knownType;
-  localStorage.setItem("fh_area", selectedArea);
-
-  const appTitle=document.getElementById("appTitle");
-  const appSub=document.getElementById("appSub");
-  const cvHeading=document.getElementById("cvHeading");
-  const analyzeBtn=document.getElementById("analyzeBtn");
-
-  if(appTitle) appTitle.textContent=selectedArea==="recruiter" ? "Recruiter Screening Area" : "Job Seeker CV Scanner";
-  if(appSub) appSub.textContent=selectedArea==="recruiter" ? "Compare candidates against the role requirement, surface shortlist risks and prepare a faster hiring decision." : "Upload or paste your CV and compare it with a job description.";
-  if(cvHeading) cvHeading.textContent=selectedArea==="recruiter" ? "Candidate CV" : "CV / Resume";
-  if(analyzeBtn){
-    analyzeBtn.disabled=false;
-    analyzeBtn.textContent="Analyze CV";
-  }
-
-  showPage("app");
-
-  fhQuickProfile().then(profile=>{
-    if(profile?.user_type){
-      selectedArea=profile.user_type;
-      localStorage.setItem("fh_area", selectedArea);
-      if(appTitle) appTitle.textContent=selectedArea==="recruiter" ? "Recruiter Screening Area" : "Job Seeker CV Scanner";
-      if(appSub) appSub.textContent=selectedArea==="recruiter" ? "Compare candidates against the role requirement, surface shortlist risks and prepare a faster hiring decision." : "Upload or paste your CV and compare it with a job description.";
-      if(cvHeading) cvHeading.textContent=selectedArea==="recruiter" ? "Candidate CV" : "CV / Resume";
-    }
-    updateTopUserChip().catch(()=>{});
-  }).catch(()=>{});
-}
-
-async function startAreaFlow(type){
-  const session=await fhQuickSession();
-  if(!session?.user && !currentUser){
-    requireLoginForScan(type || selectedArea || "jobseeker");
-    return;
-  }
-
-  const profile=await fhQuickProfile();
-  if(profile?.user_type && type && profile.user_type!==type){
-    await guardRoleAccess(type,"area access");
-    return;
-  }
-
-  enterArea(profile?.user_type || type || selectedArea || "jobseeker");
-}
-
-async function openUserTypeModal(purpose){
-  userTypePurpose=purpose||"scan";
-
-  const session=await fhQuickSession();
-  if(session?.user || currentUser){
-    const profile=await fhQuickProfile();
-    const type=profile?.user_type || selectedArea || "jobseeker";
-    if(userTypePurpose==="pricing") showPricingFor(type);
-    else enterArea(type);
-    return;
-  }
-
-  const modal=document.getElementById("userTypeModal");
-  if(modal) modal.style.display="flex";
-}
-
-function showPage(page){
-  // Clear any stuck modal/disabled transient state when navigating between app pages.
-  document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
-  const target=document.getElementById("page-"+page);
-  if(target) target.classList.add("active");
-
-  const analyzeBtn=document.getElementById("analyzeBtn");
-  if(page==="app" && analyzeBtn && analyzeBtn.textContent!=="Analyzing"){
-    analyzeBtn.disabled=false;
-  }
-
-  window.scrollTo({top:0,behavior:"smooth"});
-}
-
-/* ==== END STABILITY OVERRIDE ==== */
 
 window.addEventListener("focus",()=>{
   ensureFreshSession().then(()=>updateTopUserChip()).catch(()=>{});
