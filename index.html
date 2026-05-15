@@ -668,36 +668,40 @@ function closeRoleSetup(){
 }
 
 async function ensureFreshSession(){
-  // Try to recover/refresh the persisted Supabase session before deciding the user is logged out.
-  // Important: do NOT mark the user logged out just because getSession is slow.
+  // Refresh-proof authentication recovery.
+  // Page refresh should not log the user out. Only manual Sign Out or inactivity should.
   try{
-    const sessionResult=await withTimeout(
-      fynalhireClient.auth.getSession(),
-      4500,
-      "Session lookup timed out"
-    );
-    if(sessionResult?.data?.session){
+    const {data,error}=await fynalhireClient.auth.getSession();
+    if(error) console.warn("Session lookup warning:",error);
+    if(data?.session){
       signedIn=true;
-      currentUser=sessionResult.data.session.user;
-      return sessionResult.data.session;
+      currentUser=data.session.user;
+      return data.session;
     }
   }catch(e){
-    console.warn("Session lookup failed, trying stored token/refresh:",e);
+    console.warn("Session lookup failed:",e);
   }
 
-  // If a valid access token is still in localStorage, recover the user from that token.
-  // This prevents the UI from losing My Account while the top button still shows Sign Out.
+  try{
+    const {data,error}=await fynalhireClient.auth.refreshSession();
+    if(error) console.warn("Session refresh warning:",error);
+    if(data?.session){
+      signedIn=true;
+      currentUser=data.session.user;
+      return data.session;
+    }
+  }catch(e){
+    console.warn("Session refresh failed:",e);
+  }
+
   try{
     const storedToken=typeof getStoredSupabaseAccessTokenSafe === "function" ? getStoredSupabaseAccessTokenSafe() : null;
     if(storedToken){
-      const userResult=await withTimeout(
-        fynalhireClient.auth.getUser(storedToken),
-        3500,
-        "Stored token user lookup timed out"
-      );
-      if(userResult?.data?.user){
+      const {data,error}=await fynalhireClient.auth.getUser(storedToken);
+      if(error) console.warn("Stored token user lookup warning:",error);
+      if(data?.user){
         signedIn=true;
-        currentUser=userResult.data.user;
+        currentUser=data.user;
         return {user:currentUser, access_token:storedToken};
       }
     }
@@ -705,29 +709,8 @@ async function ensureFreshSession(){
     console.warn("Stored token recovery failed:",e);
   }
 
-  try{
-    const refreshResult=await withTimeout(
-      fynalhireClient.auth.refreshSession(),
-      5000,
-      "Session refresh timed out"
-    );
-    if(refreshResult?.data?.session){
-      signedIn=true;
-      currentUser=refreshResult.data.session.user;
-      return refreshResult.data.session;
-    }
-  }catch(e){
-    console.warn("Session refresh failed:",e);
-  }
-
-  const stillHasStoredToken=typeof getStoredSupabaseAccessTokenSafe === "function" && !!getStoredSupabaseAccessTokenSafe();
-  if(stillHasStoredToken){
-    signedIn=true;
-    return {user:currentUser};
-  }
-
-  currentUser=null;
   signedIn=false;
+  currentUser=null;
   return null;
 }
 
@@ -837,6 +820,8 @@ async function routeAfterLogin(){
   const profile=await loadUserProfile();
 
   if(!profile || !profile.user_type){
+    // New users must explicitly choose Job Seeker or Recruiter.
+    // Do not silently default everyone into Job Seeker after Google login.
     const roleToApply=pendingSignupRole || localStorage.getItem("fh_pending_signup_role") || "";
     if(roleToApply==="jobseeker" || roleToApply==="recruiter"){
       try{
@@ -1597,7 +1582,11 @@ async function showPricingFor(type){
 }
 async function handleAuthButton(){
   if(signedIn){await logoutUser();}
-  else{openAuthWithMessage("Create an account or sign in before continuing.","Sign In / Create Account");}
+  else{
+    pendingSignupRole="";
+    localStorage.removeItem("fh_pending_signup_role");
+    openAuthWithMessage("Existing users can sign in directly. New users will be asked to choose Job Seeker or Recruiter before continuing.","Sign In / Create Account");
+  }
 }
 
 async function refreshAuth(){
@@ -1639,14 +1628,15 @@ async function signupUser(){
   if(!email||!password){showAuthStatus("Please enter email and password.","error");return;}
   showAuthStatus("Creating account...");
   try{
+    const roleForSignup=(pendingSignupRole==="jobseeker" || pendingSignupRole==="recruiter") ? pendingSignupRole : undefined;
     const {data,error}=await fynalhireClient.auth.signUp({
       email,
       password,
-      options:{data:{user_type:selectedArea}}
+      options:{data: roleForSignup ? {user_type:roleForSignup} : {}}
     });
     if(error){showAuthStatus("Account creation failed: "+error.message,"error");return;}
     if(data && data.session){
-      const roleToApply=pendingSignupRole || localStorage.getItem("fh_pending_signup_role") || selectedArea;
+      const roleToApply=pendingSignupRole || localStorage.getItem("fh_pending_signup_role") || "";
       if(roleToApply==="jobseeker" || roleToApply==="recruiter"){
         try{ await saveRoleProfileOnly(roleToApply); }catch(e){ console.warn("Role save after signup failed:",e); }
       }
@@ -1733,8 +1723,13 @@ async function loginUser(){
 }
 
 async function loginWithGoogle(){
-  selectedArea=selectedArea||"jobseeker";
-  localStorage.setItem("fh_area",selectedArea);
+  // Existing users: we load their registered role after Google login.
+  // New users: if they have not chosen a role yet, routeAfterLogin will ask them.
+  if(pendingSignupRole==="jobseeker" || pendingSignupRole==="recruiter"){
+    selectedArea=pendingSignupRole;
+    localStorage.setItem("fh_area",selectedArea);
+    localStorage.setItem("fh_pending_signup_role",selectedArea);
+  }
 
   const redirectTo = FYNALHIRE_SITE_URL;
   showAuthStatus("Redirecting to Google...");
@@ -2558,11 +2553,23 @@ document.addEventListener("visibilitychange",()=>{
 
 window.addEventListener("load",async()=>{
   console.log("FynalHire compliance footer build loaded.");
-  await refreshAuth();
   await handleOAuthReturn();
+  await refreshAuth();
   await handlePaymentReturn();
 });
-fynalhireClient.auth.onAuthStateChange(()=>refreshAuth());
+fynalhireClient.auth.onAuthStateChange((event, session)=>{
+  if(event==="SIGNED_IN" || event==="TOKEN_REFRESHED" || event==="USER_UPDATED"){
+    signedIn=!!session;
+    currentUser=session?.user || currentUser;
+    refreshAuth().catch(e=>console.warn("Auth state refresh failed:",e));
+  }
+  if(event==="SIGNED_OUT"){
+    signedIn=false;
+    currentUser=null;
+    currentProfile=null;
+    updateTopUserChip().catch(()=>{});
+  }
+});
 </script>
 
 </body>
