@@ -344,6 +344,51 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
 .btn-danger:hover{background:#b91c1c}
 .account-management-note{max-width:820px;margin:22px auto 0;text-align:center;color:#475569;line-height:1.6}
 
+
+/* Feedback button and modal */
+.feedback-float-btn{
+  position:fixed;
+  right:22px;
+  bottom:22px;
+  z-index:9998;
+  background:#2563eb;
+  color:#fff;
+  border:none;
+  border-radius:999px;
+  padding:14px 18px;
+  font-weight:900;
+  box-shadow:0 16px 40px rgba(37,99,235,.28);
+  cursor:pointer;
+}
+.feedback-float-btn:hover{background:#1d4ed8}
+.feedback-note{
+  color:#334155;
+  line-height:1.65;
+  margin:8px 0 16px;
+}
+.feedback-modal textarea{
+  min-height:150px;
+}
+.feedback-modal select,
+.feedback-modal input,
+.feedback-modal textarea{
+  width:100%;
+  padding:13px 14px;
+  border:1.5px solid #cbd5e1;
+  border-radius:10px;
+  margin:8px 0;
+  font-family:Arial,sans-serif;
+}
+.feedback-small{
+  color:#64748b;
+  font-size:12px;
+  line-height:1.5;
+  margin-top:10px;
+}
+@media(max-width:760px){
+  .feedback-float-btn{right:14px;bottom:14px;padding:12px 14px;font-size:13px}
+}
+
 </style>
 </head>
 <body>
@@ -364,6 +409,29 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
 <div class="security-bar" id="securityBar">For your security, you will be signed out in <span id="idleTimer">02:00</span> due to inactivity. Move your mouse or press any key to stay signed in.</div>
 <div id="paymentReturnBanner" class="payment-return-banner"></div>
 <div id="fhGlobalNotice" class="fh-global-notice"></div>
+
+<button type="button" class="feedback-float-btn" onclick="openFeedbackModal()">💬 Feedback</button>
+
+<div id="feedbackModal" class="auth-modal-overlay">
+  <div class="auth-modal feedback-modal">
+    <button type="button" class="auth-close" onclick="closeFeedbackModal()">Close</button>
+    <h2>Share Your FynalHire Feedback</h2>
+    <p class="feedback-note">Your voice helps us build something genuinely useful. Please share both the positives and the negatives — we want to improve where we fall short, and we would love to cherish your success when FynalHire helps you move closer to the right opportunity.</p>
+    <select id="feedbackType">
+      <option value="General Feedback">General Feedback</option>
+      <option value="Positive Feedback / Success Story">Positive Feedback / Success Story</option>
+      <option value="Negative Feedback / Improvement Needed">Negative Feedback / Improvement Needed</option>
+      <option value="Bug Report">Bug Report</option>
+      <option value="Feature Request">Feature Request</option>
+    </select>
+    <input id="feedbackEmail" type="email" placeholder="Your email address (optional)">
+    <textarea id="feedbackMessage" placeholder="Tell us what worked, what did not, or how FynalHire helped you..."></textarea>
+    <div id="feedbackStatus" class="auth-status"></div>
+    <button type="button" class="btn-primary" style="width:100%;margin-top:10px" onclick="sendFeedbackEmail()">Send Feedback</button>
+    <p class="feedback-small">This will open your email app addressed to info@fynalhire.com. We will add direct in-app submission later when a transactional email service is connected.</p>
+  </div>
+</div>
+
 
 <section id="page-home" class="page active">
   <div class="hero">
@@ -657,6 +725,59 @@ const CHECKOUT_PLAN_MAP={
   rec_premium:"recruiter"
 };
 
+
+
+
+function openFeedbackModal(){
+  const modal=document.getElementById("feedbackModal");
+  const status=document.getElementById("feedbackStatus");
+  if(status){status.style.display="none";status.textContent="";}
+  const emailInput=document.getElementById("feedbackEmail");
+  if(emailInput && currentUser?.email && !emailInput.value){emailInput.value=currentUser.email;}
+  if(modal) modal.style.display="flex";
+}
+
+function closeFeedbackModal(){
+  const modal=document.getElementById("feedbackModal");
+  if(modal) modal.style.display="none";
+}
+
+function showFeedbackStatus(message,type=""){
+  const box=document.getElementById("feedbackStatus");
+  if(!box)return;
+  box.style.display="block";
+  box.className="auth-status "+type;
+  box.textContent=message;
+}
+
+function sendFeedbackEmail(){
+  const type=(document.getElementById("feedbackType")?.value || "General Feedback").trim();
+  const email=(document.getElementById("feedbackEmail")?.value || "").trim();
+  const message=(document.getElementById("feedbackMessage")?.value || "").trim();
+
+  if(!message || message.length<10){
+    showFeedbackStatus("Please write a little more feedback before sending.","error");
+    return;
+  }
+
+  const page=window.location.href;
+  const plan=currentProfile?.plan ? planLabel(currentProfile.plan) : "Unknown";
+  const userEmail=email || currentUser?.email || "Not provided";
+  const subject=`FynalHire Feedback - ${type}`;
+  const body=`Feedback type: ${type}
+User email: ${userEmail}
+Current plan: ${plan}
+Page: ${page}
+
+Message:
+${message}
+
+---
+Sent from FynalHire feedback button.`;
+  const mailto=`mailto:info@fynalhire.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  showFeedbackStatus("Opening your email app...","success");
+  window.location.href=mailto;
+}
 
 function openRoleSetup(){
   const modal=document.getElementById("roleSetupModal");
