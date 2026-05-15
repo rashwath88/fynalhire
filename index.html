@@ -340,6 +340,10 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
   opacity:.9;
 }
 
+.btn-danger{background:#dc2626;border:none;color:#fff;padding:14px 22px;border-radius:14px;font-weight:800;cursor:pointer}
+.btn-danger:hover{background:#b91c1c}
+.account-management-note{max-width:820px;margin:22px auto 0;text-align:center;color:#475569;line-height:1.6}
+
 </style>
 </head>
 <body>
@@ -462,6 +466,7 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
     <div style="margin-top:22px;display:flex;gap:12px;flex-wrap:wrap;justify-content:center">
       <button type="button" class="btn-primary" onclick="enterArea(selectedArea)">Start Scan</button>
       <button type="button" class="btn-outline" id="accountUpgradeBtn" onclick="showPricingFor(selectedArea)">Upgrade Plan</button>
+      <button type="button" class="btn-danger" id="accountCancelBtn" style="display:none" onclick="cancelSubscriptionAtPeriodEnd()">Cancel Renewal</button>
     </div>
   </div>
 </section>
@@ -637,6 +642,7 @@ let pendingSignupRole=localStorage.getItem("fh_pending_signup_role")||"";
 
 const SUBSCRIPTION_CHECKOUT_FUNCTION="create-subscription-checkout";
 const SYNC_SUBSCRIPTION_FUNCTION="sync-my-subscription";
+const CANCEL_SUBSCRIPTION_FUNCTION="cancel-subscription";
 
 const CHECKOUT_PLAN_MAP={
   growth:"growth",
@@ -970,6 +976,8 @@ async function showMyAccount(){
   document.getElementById("accountEmail").textContent=currentUser.email || currentProfile?.email || "—";
   document.getElementById("accountPlan").textContent=planLabel(plan);
 
+  const cancelBtn=document.getElementById("accountCancelBtn");
+
   if(isFreePlan(plan)){
     document.getElementById("accountPlanNote").textContent=`Account type: ${type==="recruiter" ? "Recruiter" : "Job Seeker"} · Status: Free · Created: ${created}`;
     document.getElementById("accountScans").textContent=`${usage.left} / ${usage.limit}`;
@@ -978,10 +986,12 @@ async function showMyAccount(){
     document.getElementById("accountExpiry").textContent="Not applicable";
     document.getElementById("accountExpiryNote").textContent="Free plans do not have a subscription expiry. Free scan allowance resets monthly.";
     document.getElementById("accountUpgradeBtn").style.display="inline-block";
+    if(cancelBtn) cancelBtn.style.display="none";
   }else{
     const paidPlanLabel=planLabel(plan);
-    const billingStatus=active ? "Active" : status.charAt(0).toUpperCase()+status.slice(1);
-    document.getElementById("accountPlanNote").textContent=`Billing: ${billingStatus} · Subscription: Monthly renewal`;
+    const cancelling=status==="cancel_at_period_end" || status==="active_until_expiry";
+    const billingStatus=cancelling ? "Cancels at period end" : (active ? "Active" : status.charAt(0).toUpperCase()+status.slice(1));
+    document.getElementById("accountPlanNote").textContent=`Billing: ${billingStatus} · Subscription: ${cancelling ? "No further renewal" : "Monthly renewal"}`;
     document.getElementById("accountScans").textContent="Unlimited";
     const scansNote=document.getElementById("accountScansNote");
     if(scansNote) scansNote.textContent=`Unlimited scans are included with your ${paidPlanLabel} plan.`;
@@ -989,13 +999,74 @@ async function showMyAccount(){
     if(!active){
       document.getElementById("accountExpiryNote").textContent="Your paid access is not active or the subscription period has ended. Please renew or contact support.";
       document.getElementById("accountUpgradeBtn").style.display="inline-block";
+      if(cancelBtn) cancelBtn.style.display="none";
+    }else if(cancelling){
+      document.getElementById("accountExpiryNote").textContent=expiryRaw ? `Your renewal is cancelled. Your plan remains active until ${expiry}.` : "Your renewal is cancelled. Your plan remains active until the current paid period ends.";
+      document.getElementById("accountUpgradeBtn").style.display=(plan==="elite" || plan==="rec_premium") ? "none" : "inline-block";
+      if(cancelBtn) cancelBtn.style.display="none";
     }else{
       document.getElementById("accountExpiryNote").textContent=expiryRaw ? "Your subscription is active. This is your next renewal / validity date." : "Your subscription is active. Renewal date is still being synced from Stripe.";
       document.getElementById("accountUpgradeBtn").style.display=(plan==="elite" || plan==="rec_premium") ? "none" : "inline-block";
+      if(cancelBtn) cancelBtn.style.display=currentProfile?.stripe_subscription_id ? "inline-block" : "none";
     }
   }
 
   showPage("account");
+}
+
+async function cancelSubscriptionAtPeriodEnd(){
+  await getCurrentUser();
+  if(!currentUser){
+    openAuthWithMessage("Please log in again to manage your subscription.","Log in required");
+    return;
+  }
+
+  await loadUserProfile();
+  const plan=normalizePlan(currentProfile?.plan || "free");
+  const expiryRaw=effectivePlanExpiry();
+  const expiry=formatFynalHireDate(expiryRaw);
+
+  if(isFreePlan(plan)){
+    showGlobalNotice("Free plans do not have automatic renewal.");
+    return;
+  }
+
+  if(!currentProfile?.stripe_subscription_id){
+    showGlobalNotice("We could not find an active Stripe subscription for this account. Please contact support.","warning");
+    return;
+  }
+
+  const ok=window.confirm(`Cancel automatic renewal for your ${planLabel(plan)} plan?\n\nYour plan will remain active until ${expiryRaw ? expiry : "the end of the current paid period"}. After that, your account will return to Free unless you renew again.`);
+  if(!ok) return;
+
+  const btn=document.getElementById("accountCancelBtn");
+  const oldText=btn ? btn.textContent : "Cancel Renewal";
+  if(btn){btn.disabled=true;btn.textContent="Cancelling renewal...";}
+
+  try{
+    showGlobalNotice("Cancelling automatic renewal...");
+    const {data,error}=await fynalhireClient.functions.invoke(CANCEL_SUBSCRIPTION_FUNCTION,{
+      body:{reason:"user_requested_cancel_at_period_end"}
+    });
+
+    if(error){
+      console.error("Cancel subscription error:",error);
+      showGlobalNotice(error.message || "Could not cancel renewal. Please try again or contact support.","warning");
+      return;
+    }
+
+    if(data?.profile){
+      currentProfile=data.profile;
+    }
+
+    showGlobalNotice("Automatic renewal cancelled. Your plan remains active until the current paid period ends.");
+    await showMyAccount();
+  }catch(e){
+    console.error("Cancel subscription exception:",e);
+    showGlobalNotice(e.message || "Could not cancel renewal. Please try again or contact support.","warning");
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent=oldText;}
+  }
 }
 
 function showPage(page){
