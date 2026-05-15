@@ -1655,26 +1655,49 @@ function getStoredSupabaseAccessTokenSafe(){
   try{
     clearLegacyStoredTokens();
 
+    function collectTokens(value, out=[]){
+      if(!value) return out;
+      if(typeof value === "string"){
+        if(value.split(".").length===3) out.push(value);
+        return out;
+      }
+      if(Array.isArray(value)){
+        value.forEach(v=>collectTokens(v,out));
+        return out;
+      }
+      if(typeof value === "object"){
+        Object.keys(value).forEach(k=>{
+          if(k.toLowerCase().includes("access_token") && typeof value[k] === "string") out.push(value[k]);
+          else collectTokens(value[k],out);
+        });
+      }
+      return out;
+    }
+
+    const keysToCheck=[];
     for(let i=0;i<localStorage.length;i++){
       const key=localStorage.key(i);
       if(!key) continue;
-      if(!key.includes("auth-token")) continue;
+      // Supabase token may be stored under our custom key "fynalhire-auth-v1",
+      // or under default keys such as sb-...-auth-token.
+      if(key.includes("fynalhire-auth") || key.includes("auth-token") || key.includes("supabase")){
+        keysToCheck.push(key);
+      }
+    }
 
+    for(const key of keysToCheck){
       const raw=localStorage.getItem(key);
       if(!raw) continue;
 
       try{
         const parsed=JSON.parse(raw);
-        const candidates=[
-          parsed?.access_token,
-          parsed?.currentSession?.access_token,
-          parsed?.session?.access_token
-        ].filter(Boolean);
-
+        const candidates=collectTokens(parsed,[]);
         for(const token of candidates){
           if(isJwtStillValid(token)) return token;
         }
-      }catch(_){}
+      }catch(_){
+        if(raw.split(".").length===3 && isJwtStillValid(raw)) return raw;
+      }
     }
   }catch(e){
     console.warn("Could not inspect Supabase local session:",e);
