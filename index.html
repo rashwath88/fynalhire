@@ -664,10 +664,11 @@ function closeRoleSetup(){
 
 async function ensureFreshSession(){
   // Try to recover/refresh the persisted Supabase session before deciding the user is logged out.
+  // Important: do NOT mark the user logged out just because getSession is slow.
   try{
     const sessionResult=await withTimeout(
       fynalhireClient.auth.getSession(),
-      3500,
+      4500,
       "Session lookup timed out"
     );
     if(sessionResult?.data?.session){
@@ -676,7 +677,27 @@ async function ensureFreshSession(){
       return sessionResult.data.session;
     }
   }catch(e){
-    console.warn("Session lookup failed, trying refresh:",e);
+    console.warn("Session lookup failed, trying stored token/refresh:",e);
+  }
+
+  // If a valid access token is still in localStorage, recover the user from that token.
+  // This prevents the UI from losing My Account while the top button still shows Sign Out.
+  try{
+    const storedToken=typeof getStoredSupabaseAccessTokenSafe === "function" ? getStoredSupabaseAccessTokenSafe() : null;
+    if(storedToken){
+      const userResult=await withTimeout(
+        fynalhireClient.auth.getUser(storedToken),
+        3500,
+        "Stored token user lookup timed out"
+      );
+      if(userResult?.data?.user){
+        signedIn=true;
+        currentUser=userResult.data.user;
+        return {user:currentUser, access_token:storedToken};
+      }
+    }
+  }catch(e){
+    console.warn("Stored token recovery failed:",e);
   }
 
   try{
@@ -692,6 +713,12 @@ async function ensureFreshSession(){
     }
   }catch(e){
     console.warn("Session refresh failed:",e);
+  }
+
+  const stillHasStoredToken=typeof getStoredSupabaseAccessTokenSafe === "function" && !!getStoredSupabaseAccessTokenSafe();
+  if(stillHasStoredToken){
+    signedIn=true;
+    return {user:currentUser};
   }
 
   currentUser=null;
@@ -717,8 +744,9 @@ async function loadUserProfile(){
 
   if(error || !data){
     console.warn("Profile missing or inaccessible:",error);
-    currentProfile=null;
-    return null;
+    // Do not clear an existing profile on a temporary RLS/network/session hiccup.
+    // Clearing it makes the header lose My Account even while the user is still signed in.
+    return currentProfile || null;
   }
 
   currentProfile=data;
@@ -966,22 +994,32 @@ async function getScanUsage(){
 async function updateTopUserChip(){
   const chip=document.getElementById("userChip");
   const accountNav=document.getElementById("myAccountNav");
+  const btn=document.getElementById("authTopBtn");
   if(!chip) return;
 
-  if(!signedIn || !currentUser){
+  // Before hiding account navigation, try to recover the stored session.
+  const hasStoredToken=typeof getStoredSupabaseAccessTokenSafe === "function" && !!getStoredSupabaseAccessTokenSafe();
+  if((!signedIn || !currentUser) && hasStoredToken){
+    await ensureFreshSession();
+  }
+
+  if(!signedIn && !hasStoredToken){
     chip.style.display="none";
     if(accountNav) accountNav.style.display="none";
     return;
   }
 
-  if(!currentProfile) await loadUserProfile();
+  if(btn) btn.textContent="Sign Out";
+  if(accountNav) accountNav.style.display="inline-block";
+
+  if(!currentProfile && currentUser){
+    await loadUserProfile();
+  }
 
   const first=getFirstNameFromUser();
   const plan=planLabel(currentProfile?.plan || "free");
   chip.textContent=`${first} - ${plan}`;
   chip.style.display="inline-block";
-
-  if(accountNav) accountNav.style.display="inline-block";
 }
 
 async function showMyAccount(){
@@ -1367,20 +1405,24 @@ async function handleAuthButton(){
 async function refreshAuth(){
   try{
     const wasSignedIn=signedIn;
-    const {data}=await fynalhireClient.auth.getSession();
-    signedIn=!!data.session;
-    currentUser=data && data.session ? data.session.user : null;
+    const session=await ensureFreshSession();
+    const hasStoredToken=typeof getStoredSupabaseAccessTokenSafe === "function" && !!getStoredSupabaseAccessTokenSafe();
+    signedIn=!!(session || hasStoredToken);
+    if(session?.user) currentUser=session.user;
+
     const btn=document.getElementById("authTopBtn");
     const chip=document.getElementById("userChip");
+    const accountNav=document.getElementById("myAccountNav");
+
     if(signedIn){
       if(btn) btn.textContent="Sign Out";
-      await loadUserProfile();
+      if(accountNav) accountNav.style.display="inline-block";
+      if(currentUser) await loadUserProfile();
       await updateTopUserChip();
       startIdleTimer();
     }else{
       if(btn) btn.textContent="Sign In";
       if(chip){ chip.textContent=""; chip.style.display="none"; }
-      const accountNav=document.getElementById("myAccountNav");
       if(accountNav) accountNav.style.display="none";
       stopIdleTimer();
       currentUser=null;
