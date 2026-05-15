@@ -1686,7 +1686,7 @@ async function getAccessTokenFast(){
   clearLegacyStoredTokens();
 
   try{
-    const timeoutPromise=new Promise((_,reject)=>setTimeout(()=>reject(new Error("Session lookup timeout")),12000));
+    const timeoutPromise=new Promise((_,reject)=>setTimeout(()=>reject(new Error("Session lookup timeout")),2000));
     const sessionPromise=fynalhireClient.auth.getSession();
     const {data,error}=await Promise.race([sessionPromise,timeoutPromise]);
 
@@ -1713,37 +1713,23 @@ function withTimeout(promise, ms, label="Operation timed out"){
 }
 
 async function getAccessTokenForProtectedAction(){
-  // Keep this deliberately fast. A user should not be stuck at
-  // "Checking secure login session..." if Supabase session recovery stalls.
-  let token=await getAccessTokenFast();
-  if(token) return token;
+  // Fast path first: use the already persisted Supabase token from localStorage.
+  // This avoids the UI hanging on "Checking secure login session...".
+  const stored=getStoredSupabaseAccessTokenSafe();
+  if(stored) return stored;
 
   try{
     const sessionResult=await withTimeout(
       fynalhireClient.auth.getSession(),
-      5000,
+      2500,
       "Session lookup timed out"
     );
 
-    if(sessionResult?.data?.session?.access_token && isJwtStillValid(sessionResult.data.session.access_token)){
-      return sessionResult.data.session.access_token;
-    }
-
-    if(sessionResult?.data?.session?.refresh_token){
-      const refreshed=await withTimeout(
-        fynalhireClient.auth.refreshSession(),
-        7000,
-        "Session refresh timed out"
-      );
-      const refreshedToken=refreshed?.data?.session?.access_token;
-      if(refreshedToken && isJwtStillValid(refreshedToken)) return refreshedToken;
-    }
+    const token=sessionResult?.data?.session?.access_token;
+    if(token && isJwtStillValid(token)) return token;
   }catch(e){
-    console.warn("Protected session recovery failed:",e);
+    console.warn("Fast session check failed:",e);
   }
-
-  const stored=getStoredSupabaseAccessTokenSafe();
-  if(stored) return stored;
 
   return null;
 }
@@ -1882,22 +1868,6 @@ async function analyzeWithFynalHireAPI(event){
   }
 
   try{
-    setDebug("Preparing analysis...");
-
-    setDebug("Checking secure login session...");
-    let accessToken=await getAccessTokenForProtectedAction();
-
-    if(!accessToken){
-      await refreshAuth();
-      accessToken=await getAccessTokenForProtectedAction();
-    }
-
-    if(!accessToken){
-      setDebug("Your session has expired. Please log in again to continue.","error");
-      showLoggedOutNotice("Your session has expired. Please log in again to continue.",true);
-      return;
-    }
-
     const jd=document.getElementById("jdText").value.trim();
     const cv=document.getElementById("cvText").value.trim();
 
@@ -1916,7 +1886,15 @@ async function analyzeWithFynalHireAPI(event){
     results.innerHTML='<div class="insight"><h4><span class="analyzing-dots">Analyzing your CV</span></h4><p>FynalHire is comparing the CV with the job description and preparing recruiter-style feedback.</p></div>';
     results.scrollIntoView({behavior:"smooth"});
 
-    setDebug("");
+    setDebug("Analyzing...");
+
+    const accessToken=await getAccessTokenForProtectedAction();
+
+    if(!accessToken){
+      setDebug("Your session has expired. Please log in again to continue.","error");
+      showLoggedOutNotice("Your session has expired. Please log in again to continue.",true);
+      return;
+    }
 
     const controller=new AbortController();
     const timeout=setTimeout(()=>controller.abort(),90000);
