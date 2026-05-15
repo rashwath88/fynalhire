@@ -580,10 +580,18 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
 <div id="userTypeModal" class="auth-modal-overlay">
   <div class="auth-modal">
     <button type="button" class="auth-close" onclick="closeUserTypeModal()">Close</button>
-    <h2>How do you want to use FynalHire?</h2>
-    <p style="color:#334155;line-height:1.6">Select your user type so we can show the right scanner and pricing.</p>
-    <button type="button" class="btn-primary" onclick="chooseUserType('jobseeker')" style="width:100%;margin-bottom:10px">👤 I am a Job Seeker</button>
-    <button type="button" class="btn-outline" onclick="chooseUserType('recruiter')" style="width:100%">🏢 I am a Recruiter</button>
+    <h2>Who is using FynalHire?</h2>
+    <p style="color:#334155;line-height:1.6">Choose the workspace before signing in. Job Seeker and Recruiter accounts use different scanners, reports and pricing.</p>
+    <div class="card" style="padding:18px;margin:14px 0;border-radius:16px">
+      <h3 style="margin:0 0 8px">👤 Job Seeker</h3>
+      <p style="margin:0 0 12px;color:#334155;line-height:1.55">Check your CV against a job description, understand shortlist probability, and improve your application.</p>
+      <button type="button" class="btn-primary" onclick="chooseUserType('jobseeker')" style="width:100%">Continue as Job Seeker</button>
+    </div>
+    <div class="card" style="padding:18px;margin:14px 0 0;border-radius:16px">
+      <h3 style="margin:0 0 8px">🏢 Recruiter</h3>
+      <p style="margin:0 0 12px;color:#334155;line-height:1.55">Screen candidates faster, identify role-fit gaps, flag hiring risks, and prepare shortlist decisions.</p>
+      <button type="button" class="btn-outline" onclick="chooseUserType('recruiter')" style="width:100%">Continue as Recruiter</button>
+    </div>
   </div>
 </div>
 
@@ -625,6 +633,7 @@ let idleInterval=null;
 let currentUser=null;
 let currentProfile=null;
 let suppressNextLogoutNotice=false;
+let pendingSignupRole=localStorage.getItem("fh_pending_signup_role")||"";
 
 const SUBSCRIPTION_CHECKOUT_FUNCTION="create-subscription-checkout";
 const SYNC_SUBSCRIPTION_FUNCTION="sync-my-subscription";
@@ -750,11 +759,21 @@ async function routeAfterLogin(){
   const profile=await loadUserProfile();
 
   if(!profile || !profile.user_type){
-    openRoleSetup();
-    return;
+    const roleToApply=pendingSignupRole || localStorage.getItem("fh_pending_signup_role") || "";
+    if(roleToApply==="jobseeker" || roleToApply==="recruiter"){
+      try{
+        await saveRoleProfileOnly(roleToApply);
+      }catch(e){
+        openRoleSetup();
+        return;
+      }
+    }else{
+      openRoleSetup();
+      return;
+    }
   }
 
-  selectedArea=profile.user_type || selectedArea;
+  selectedArea=currentProfile?.user_type || profile?.user_type || selectedArea;
   localStorage.setItem("fh_area",selectedArea);
   await updateTopUserChip();
 
@@ -1028,10 +1047,12 @@ function showLoggedOutNotice(message="You have been logged out. Please log in ag
 
 function requireLoginForScan(area){
   selectedArea=area || selectedArea || "jobseeker";
+  pendingSignupRole=selectedArea;
   localStorage.setItem("fh_area",selectedArea);
+  localStorage.setItem("fh_pending_signup_role",selectedArea);
   pendingAction="enter_area";
-  showGlobalNotice("Log in to start your free scan.");
-  openAuthWithMessage("Log in to start your free scan.","Log in required");
+  showGlobalNotice(`Log in to continue as ${roleLabel(selectedArea)}.`);
+  openAuthWithMessage(`Log in or create an account to continue as ${roleLabel(selectedArea)}.`,`${roleLabel(selectedArea)} login`);
 }
 
 function requireLoginForUpgrade(plan,type){
@@ -1052,21 +1073,22 @@ function closeAuth(){document.getElementById("authModal").style.display="none";}
 async function openUserTypeModal(purpose){
   userTypePurpose=purpose||"scan";
 
-  if(userTypePurpose==="scan"){
-    await getCurrentUser();
-    if(currentUser){
-      const profile=await loadUserProfile();
-      if(profile && profile.user_type){
+  await getCurrentUser();
+
+  if(currentUser){
+    const profile=await loadUserProfile();
+    if(profile && profile.user_type){
+      if(userTypePurpose==="pricing"){
+        showPricingFor(profile.user_type);
+      }else{
         enterArea(profile.user_type);
-        return;
       }
-      openRoleSetup();
       return;
     }
-    requireLoginForScan(selectedArea || "jobseeker");
-    return;
   }
 
+  // New/unknown users must choose Job Seeker or Recruiter before login/signup.
+  // This avoids putting recruiters into the jobseeker workspace by default.
   document.getElementById("userTypeModal").style.display="flex";
 }
 
@@ -1074,6 +1096,7 @@ function closeUserTypeModal(){document.getElementById("userTypeModal").style.dis
 
 async function chooseUserType(type){
   await getCurrentUser();
+
   if(currentUser){
     await loadUserProfile();
     if(currentProfile?.user_type && currentProfile.user_type!==type){
@@ -1084,16 +1107,55 @@ async function chooseUserType(type){
   }
 
   selectedArea=type;
+  pendingSignupRole=type;
   localStorage.setItem("fh_area",type);
+  localStorage.setItem("fh_pending_signup_role",type);
   closeUserTypeModal();
 
+  if(currentUser){
+    if(userTypePurpose==="pricing") showPricingFor(type);
+    else startAreaFlow(type);
+    return;
+  }
+
   if(userTypePurpose==="pricing"){
-    showPricingFor(type);
+    pendingAction="show_pricing";
+    pendingPlan=null;
+    openAuthWithMessage(`Continue as ${roleLabel(type)}. Log in or create an account to view the correct plans.`,`${roleLabel(type)} login`);
   }else{
-    startAreaFlow(type);
+    pendingAction="enter_area";
+    pendingPlan=null;
+    openAuthWithMessage(`Continue as ${roleLabel(type)}. Log in or create an account to open the ${roleLabel(type)} scanner.`,`${roleLabel(type)} login`);
   }
 }
 
+async function saveRoleProfileOnly(type){
+  await getCurrentUser();
+  if(!currentUser) return null;
+  const plan=type==="recruiter" ? "rec_free" : "free";
+  const {data,error}=await fynalhireClient
+    .from("profiles")
+    .upsert({
+      id:currentUser.id,
+      email:currentUser.email,
+      user_type:type,
+      plan:plan
+    }, {onConflict:"id"})
+    .select("id,email,user_type,plan,subscription_status,subscription_current_period_end,stripe_customer_id,stripe_subscription_id,stripe_price_id,plan_started_at,plan_expires_at,plan_status,created_at")
+    .single();
+
+  if(error){
+    console.error("Could not save selected role:",error);
+    throw error;
+  }
+
+  currentProfile=data;
+  selectedArea=type;
+  localStorage.setItem("fh_area",type);
+  localStorage.removeItem("fh_pending_signup_role");
+  pendingSignupRole="";
+  return data;
+}
 
 
 function roleLabel(type){
@@ -1231,6 +1293,10 @@ async function signupUser(){
     });
     if(error){showAuthStatus("Account creation failed: "+error.message,"error");return;}
     if(data && data.session){
+      const roleToApply=pendingSignupRole || localStorage.getItem("fh_pending_signup_role") || selectedArea;
+      if(roleToApply==="jobseeker" || roleToApply==="recruiter"){
+        try{ await saveRoleProfileOnly(roleToApply); }catch(e){ console.warn("Role save after signup failed:",e); }
+      }
       showAuthStatus("Account created and signed in. Opening your area...","success");
       closeAuth();
       await afterSuccessfulLogin();
@@ -1879,6 +1945,32 @@ function renderLiveResult(r,usage){
   const isPremium=(plan==="elite" || plan==="rec_premium") && hasPaidAccess();
 
   if(free){
+    if(type==="recruiter"){
+      const topSignals=Array.isArray(r.cv_proves_well)?r.cv_proves_well.slice(0,5):[];
+      const risks=(Array.isArray(r.risk_flags)&&r.risk_flags.length?r.risk_flags:r.missing_or_weak||[]).slice(0,3);
+      const shortlistText=r.verdict || (Number(r.overall_score||0)>=7 ? "Likely Interview" : Number(r.overall_score||0)>=5 ? "Borderline" : "Low Match");
+      results.innerHTML=`
+        <div class="score">${Number(r.overall_score||0).toFixed(1)}<span style="font-size:30px;color:#64748b">/10</span></div>
+        <p><strong>Shortlist Recommendation: ${esc(shortlistText)}</strong></p>
+        <p style="color:#334155;line-height:1.75">Recruiter Free shows a limited hiring-decision preview. Upgrade to Recruiter Premium for full risk flags, interview probe questions, comparison matrix and shortlist decision brief.</p>
+        <div class="insights">
+          ${listCard("✅ Top JD Match Signals",topSignals)}
+          ${listCard("⚠️ Top Risk Indicators",risks,"warning")}
+          ${textCard("🏢 Seniority Fit Estimate",r.executive_presence&&r.executive_presence.comment ? r.executive_presence.comment : r.summary)}
+          <div class="insight purple">
+            <h4>🔒 Premium Recruiter Tools Locked</h4>
+            <p>Unlock Candidate Comparison Matrix™, Hiring Risk Flags™, Interview Probe Questions™, Shortlist Decision Confidence™, and a recruiter-ready decision brief.</p>
+            <button type="button" class="btn-primary" onclick="selectPlan('rec_premium','recruiter')">Upgrade to Recruiter Premium</button>
+          </div>
+        </div>
+        ${usage?`<p class="fh-small-note">Monthly usage: ${usage.scans_used} / ${usage.limit===9999?"fair-use unlimited":usage.limit}</p>`:""}
+        <p class="fh-small-note">${esc(r.disclaimer||"FynalHire provides AI-assisted analysis only and does not guarantee hiring outcomes.")}</p>
+      `;
+      updateTopUserChip();
+      results.scrollIntoView({behavior:"smooth"});
+      return;
+    }
+
     results.innerHTML=`
       <div class="score">${Number(r.overall_score||0).toFixed(1)}<span style="font-size:30px;color:#64748b">/10</span></div>
       <p><strong>${esc(r.verdict||"Free scan completed.")}</strong></p>
