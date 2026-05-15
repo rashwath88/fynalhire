@@ -428,7 +428,7 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
     <textarea id="feedbackMessage" placeholder="Tell us what worked, what did not, or how FynalHire helped you..."></textarea>
     <div id="feedbackStatus" class="auth-status"></div>
     <button type="button" class="btn-primary" style="width:100%;margin-top:10px" onclick="sendFeedbackEmail()">Send Feedback</button>
-    <p class="feedback-small">This will open your email app addressed to info@fynalhire.com. We will add direct in-app submission later when a transactional email service is connected.</p>
+    <p class="feedback-small">Your feedback will be sent securely to our team. Please include your email so we can thank you, follow up, or learn from your experience.</p>
   </div>
 </div>
 
@@ -718,6 +718,7 @@ let pendingSignupRole=localStorage.getItem("fh_pending_signup_role")||"";
 const SUBSCRIPTION_CHECKOUT_FUNCTION="create-subscription-checkout";
 const SYNC_SUBSCRIPTION_FUNCTION="sync-my-subscription";
 const CANCEL_SUBSCRIPTION_FUNCTION="cancel-subscription";
+const SUBMIT_FEEDBACK_FUNCTION="submit-feedback";
 
 const CHECKOUT_PLAN_MAP={
   growth:"growth",
@@ -750,10 +751,11 @@ function showFeedbackStatus(message,type=""){
   box.textContent=message;
 }
 
-function sendFeedbackEmail(){
+async function sendFeedbackEmail(){
   const type=(document.getElementById("feedbackType")?.value || "General Feedback").trim();
   const email=(document.getElementById("feedbackEmail")?.value || "").trim();
   const message=(document.getElementById("feedbackMessage")?.value || "").trim();
+  const sendBtn=Array.from(document.querySelectorAll("button")).find(btn=>btn.textContent?.trim()==="Send Feedback");
 
   if(!email){
     showFeedbackStatus("Please enter your email address so we can reach out to you.","error");
@@ -770,23 +772,44 @@ function sendFeedbackEmail(){
     return;
   }
 
-  const page=window.location.href;
-  const plan=currentProfile?.plan ? planLabel(currentProfile.plan) : "Unknown";
-  const userEmail=email;
-  const subject=`FynalHire Feedback - ${type}`;
-  const body=`Feedback type: ${type}
-User email: ${userEmail}
-Current plan: ${plan}
-Page: ${page}
+  try{
+    if(sendBtn){sendBtn.disabled=true;sendBtn.textContent="Sending...";}
+    showFeedbackStatus("Sending your feedback securely...","success");
 
-Message:
-${message}
+    const payload={
+      type,
+      email,
+      message,
+      page:window.location.href,
+      plan:currentProfile?.plan ? planLabel(currentProfile.plan) : "Unknown",
+      user_type:currentProfile?.user_type || selectedArea || "unknown",
+      account_email:currentUser?.email || currentProfile?.email || null,
+      user_agent:navigator.userAgent || ""
+    };
 
----
-Sent from FynalHire feedback button.`;
-  const mailto=`mailto:info@fynalhire.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  showFeedbackStatus("Opening your email app...","success");
-  window.location.href=mailto;
+    const {data,error}=await fynalhireClient.functions.invoke(SUBMIT_FEEDBACK_FUNCTION,{body:payload});
+
+    if(error){
+      console.error("Feedback submission error:",error);
+      showFeedbackStatus(error.message || "Feedback could not be sent. Please try again or email info@fynalhire.com.","error");
+      return;
+    }
+
+    if(data?.ok){
+      showFeedbackStatus("Thank you. Your feedback has been sent to the FynalHire team.","success");
+      const messageBox=document.getElementById("feedbackMessage");
+      if(messageBox) messageBox.value="";
+      setTimeout(()=>closeFeedbackModal(),1400);
+      return;
+    }
+
+    showFeedbackStatus(data?.message || "Feedback received. Thank you for helping us improve.","success");
+  }catch(e){
+    console.error("Feedback exception:",e);
+    showFeedbackStatus("Feedback could not be sent right now. Please try again or contact info@fynalhire.com.","error");
+  }finally{
+    if(sendBtn){sendBtn.disabled=false;sendBtn.textContent="Send Feedback";}
+  }
 }
 
 function openRoleSetup(){
