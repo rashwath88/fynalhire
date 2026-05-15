@@ -423,7 +423,7 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
     </div>
     <div class="plan-grid" id="recruiterPricing" style="display:none">
       <div class="plan" id="planCard-rec_free"><div id="planBadge-rec_free"></div><h3>Recruiter Free</h3><div class="price">Free</div><ul><li>2 scans/month</li><li>Candidate score</li><li>Keyword analysis</li></ul><button type="button" class="btn-primary" style="width:100%;margin-top:15px" id="planBtn-rec_free" onclick="selectPlan('rec_free','recruiter')">Start Recruiter Free</button></div>
-      <div class="plan" id="planCard-rec_premium"><div id="planBadge-rec_premium"></div><h3>Recruiter Premium</h3><div class="price">$49<span>/mo</span></div><ul><li>Bulk CV upload</li><li>Candidate ranking</li><li>Hiring Risk Flags™</li><li>Recruiter fatigue optimization</li></ul><button type="button" class="btn-primary" style="width:100%;margin-top:15px" id="planBtn-rec_premium" onclick="selectPlan('rec_premium','recruiter')">Buy Recruiter Premium</button></div>
+      <div class="plan" id="planCard-rec_premium"><div id="planBadge-rec_premium"></div><h3>Recruiter Premium</h3><div class="price">$49<span>/mo</span></div><ul><li>Multi-CV comparison and candidate ranking</li><li>Shortlist Decision Matrix™</li><li>Hiring Risk Flags™ and role-fit gaps</li><li>Interview Focus Questions™</li><li>Hiring Justification Summary™ for faster decisions</li><li>Recruiter fatigue optimization</li></ul><button type="button" class="btn-primary" style="width:100%;margin-top:15px" id="planBtn-rec_premium" onclick="selectPlan('rec_premium','recruiter')">Buy Recruiter Premium</button></div>
     </div>
     <div id="pricingChoiceNotice" class="card" style="text-align:center"><p>Please select Job Seeker or Recruiter first.</p><button type="button" class="btn-primary" onclick="openUserTypeModal('pricing')">Select User Type</button></div>
   </div>
@@ -1072,7 +1072,17 @@ async function openUserTypeModal(purpose){
 
 function closeUserTypeModal(){document.getElementById("userTypeModal").style.display="none";}
 
-function chooseUserType(type){
+async function chooseUserType(type){
+  await getCurrentUser();
+  if(currentUser){
+    await loadUserProfile();
+    if(currentProfile?.user_type && currentProfile.user_type!==type){
+      closeUserTypeModal();
+      await guardRoleAccess(type,"account selection");
+      return;
+    }
+  }
+
   selectedArea=type;
   localStorage.setItem("fh_area",type);
   closeUserTypeModal();
@@ -1084,6 +1094,35 @@ function chooseUserType(type){
   }
 }
 
+
+
+function roleLabel(type){
+  return type==="recruiter" ? "Recruiter" : "Job Seeker";
+}
+
+async function getAccountTypeForGuard(){
+  await getCurrentUser();
+  if(!currentUser) return null;
+  if(!currentProfile) await loadUserProfile();
+  return currentProfile?.user_type || null;
+}
+
+async function guardRoleAccess(requestedType, actionLabel="this area"){
+  const accountType=await getAccountTypeForGuard();
+  if(accountType && requestedType && accountType!==requestedType){
+    selectedArea=accountType;
+    localStorage.setItem("fh_area",accountType);
+    const message=`Your account is registered as ${roleLabel(accountType)}. You cannot enter the ${roleLabel(requestedType)} area from this account. Please use a separate ${roleLabel(requestedType)} account or contact support if you need to change account type.`;
+    showGlobalNotice(message,"warning");
+    showPage("dashboard");
+    return false;
+  }
+  return true;
+}
+
+function recruiterPremiumValueNotice(){
+  return "Recruiter Premium is built for hiring decisions, not personal CV improvement: ranking multiple candidates, surfacing role-fit gaps, flagging hiring risks, preparing interview focus areas, and creating a concise shortlist decision brief.";
+}
 
 function resetPlanCards(){
   const plans=["free","growth","elite","rec_free","rec_premium"];
@@ -1133,14 +1172,15 @@ async function refreshPricingPlanState(){
 }
 
 
-function showPricingFor(type){
+async function showPricingFor(type){
+  if(!(await guardRoleAccess(type,"pricing"))) return;
   selectedArea=type;
   localStorage.setItem("fh_area",type);
   document.getElementById("jobPricing").style.display=type==="jobseeker"?"grid":"none";
   document.getElementById("recruiterPricing").style.display=type==="recruiter"?"grid":"none";
   document.getElementById("pricingChoiceNotice").style.display="none";
   document.getElementById("pricingTitle").textContent=type==="jobseeker"?"Job Seeker Plans":"Recruiter Plans";
-  document.getElementById("pricingSub").textContent=type==="jobseeker"?"Plans for candidates who want better shortlist chances.":"Plans for recruiters who want faster candidate screening.";
+  document.getElementById("pricingSub").textContent=type==="jobseeker"?"Plans for candidates who want better shortlist chances.":"Recruiter Premium is for hiring decisions: compare candidates, rank shortlists, identify hiring risks, and prepare interview focus areas.";
   showPage("pricing");
   refreshPricingPlanState().catch(e=>console.warn("Plan state refresh failed:",e));
 }
@@ -1358,6 +1398,10 @@ async function startAreaFlow(type){
   if(currentUser){
     const profile=await loadUserProfile();
     if(profile && profile.user_type){
+      if(profile.user_type!==type){
+        await guardRoleAccess(type,"area access");
+        return;
+      }
       selectedArea=profile.user_type;
       enterArea(selectedArea);
       return;
@@ -1369,16 +1413,27 @@ async function startAreaFlow(type){
   requireLoginForScan(type);
 }
 
-function enterArea(area){
+async function enterArea(area){
   if(!signedIn){
     requireLoginForScan(area || selectedArea);
     return;
   }
 
+  await getCurrentUser();
+  if(currentUser){
+    await loadUserProfile();
+    const accountType=currentProfile?.user_type;
+    if(accountType && area && accountType!==area){
+      await guardRoleAccess(area,"area access");
+      return;
+    }
+    if(accountType) area=accountType;
+  }
+
   selectedArea=area || selectedArea;
   localStorage.setItem("fh_area",selectedArea);
   document.getElementById("appTitle").textContent=selectedArea==="recruiter"?"Recruiter Screening Area":"Job Seeker CV Scanner";
-  document.getElementById("appSub").textContent=selectedArea==="recruiter"?"Upload CVs and compare them against the role requirement.":"Upload or paste your CV and compare it with a job description.";
+  document.getElementById("appSub").textContent=selectedArea==="recruiter"?"Compare candidates against the role requirement, surface shortlist risks and prepare a faster hiring decision.":"Upload or paste your CV and compare it with a job description.";
   document.getElementById("cvHeading").textContent=selectedArea==="recruiter"?"Candidate CV":"CV / Resume";
   showPage("app");
 }
@@ -1404,6 +1459,10 @@ async function selectPlan(plan,type){
 
   signedIn=true;
   await loadUserProfile();
+  if(currentProfile?.user_type && currentProfile.user_type!==type){
+    await guardRoleAccess(type,"plan selection");
+    return;
+  }
   await updateTopUserChip();
 
   const activePlan=normalizePlan(currentProfile?.plan || "");
@@ -1416,6 +1475,7 @@ async function selectPlan(plan,type){
   await completePlanSelection(plan,type);
 }
 async function completePlanSelection(plan,type){
+  if(!(await guardRoleAccess(type || selectedArea || "jobseeker","plan selection"))) return;
   selectedArea=type || selectedArea || "jobseeker";
   localStorage.setItem("fh_area",selectedArea);
 
@@ -1829,6 +1889,41 @@ function renderLiveResult(r,usage){
       </div>
       ${usage?`<p class="fh-small-note">Monthly usage: ${usage.scans_used} / ${usage.limit===9999?"fair-use unlimited":usage.limit}</p>`:""}
       <p class="fh-small-note">${esc(r.disclaimer||"FynalHire provides AI-assisted analysis only and does not guarantee employment outcomes.")}</p>
+    `;
+    updateTopUserChip();
+    results.scrollIntoView({behavior:"smooth"});
+    return;
+  }
+
+  if(type==="recruiter"){
+    const recruiterCards=`
+      ${listCard("🧭 What The Role Actually Requires™",r.jd_really_wants)}
+      ${listCard("✅ Candidate Evidence Found™",r.cv_proves_well)}
+      ${listCard("⚠️ Role-Fit Gaps / Concerns™",r.missing_or_weak,"warning")}
+      ${listCard("🔑 Keywords Found",r.keywords_found)}
+      ${listCard("❌ Keywords Missing",r.keywords_missing,"warning")}
+      ${textCard("🪞 Professional Tone Analysis™",r.human_tone_analysis,"warning")}
+      ${textCard("🧠 Recruiter Decision Brief™",r.recruiter_mind_simulation,"purple")}
+      ${textCard("⚡ 8 Second Screening Test™",r.eight_second_test&&r.eight_second_test.finding,"warning")}
+      ${listCard("🚩 Hiring Risk Flags™",r.risk_flags && r.risk_flags.length ? r.risk_flags : r.why_not_shortlisted,"warning")}
+      ${listCard("🎯 Interview Focus Questions™",r.what_to_add)}
+      ${textCard("💼 Commercial / Business Impact Evidence™",r.commercial_impact)}
+      ${textCard("👔 Seniority & Executive Presence Signal™",r.executive_presence&&r.executive_presence.comment)}
+    `;
+
+    results.innerHTML=`
+      <div class="score">${Number(r.overall_score||0).toFixed(1)}<span style="font-size:30px;color:#64748b">/10</span></div>
+      <p><strong>${esc(r.verdict||"")}</strong></p>
+      <p style="color:#334155;line-height:1.75">${esc(r.summary||"")}</p>
+      <div class="insight purple" style="margin-top:18px">
+        <h4>🏢 Recruiter Premium Advantage</h4>
+        <p>${esc(recruiterPremiumValueNotice())}</p>
+      </div>
+      <div class="insights">
+        ${recruiterCards}
+      </div>
+      <p class="fh-small-note">${esc(r.disclaimer||"FynalHire provides AI-assisted analysis only and does not guarantee hiring outcomes.")}</p>
+      ${usage?`<p class="fh-small-note">Monthly usage: ${usage.scans_used} / ${usage.limit===9999?"fair-use unlimited":usage.limit}</p>`:""}
     `;
     updateTopUserChip();
     results.scrollIntoView({behavior:"smooth"});
