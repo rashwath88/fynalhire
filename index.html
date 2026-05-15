@@ -609,7 +609,7 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
     <input id="authPassword" type="password" placeholder="Password">
     <div id="authStatus" class="auth-status"></div>
     <button type="button" class="btn-primary" style="width:100%;margin-top:10px" onclick="signupUser()">Create Account</button>
-    <button type="button" class="btn-outline" style="width:100%;margin-top:8px" onclick="loginUser()">Sign In</button>
+    <button type="button" class="btn-outline" id="signInBtn" style="width:100%;margin-top:8px" onclick="loginUser()">Sign In</button>
     <button type="button" class="btn-outline" style="width:100%;margin-top:8px" onclick="loginWithGoogle()">Continue with Google</button>
   </div>
 </div>
@@ -633,12 +633,12 @@ let userTypePurpose="scan";
 let pendingAction=null;
 let pendingPlan=null;
 let signedIn=false;
+const IDLE_TIMEOUT_SECONDS=3600; // Keep users signed in for up to 60 minutes of inactivity.
+const IDLE_WARNING_SECONDS=120;
 let idleSeconds=IDLE_TIMEOUT_SECONDS;
 let idleInterval=null;
 let currentUser=null;
 let currentProfile=null;
-const IDLE_TIMEOUT_SECONDS=3600; // Keep users signed in for up to 60 minutes of inactivity.
-const IDLE_WARNING_SECONDS=120;
 let suppressNextLogoutNotice=false;
 let pendingSignupRole=localStorage.getItem("fh_pending_signup_role")||"";
 
