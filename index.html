@@ -1705,29 +1705,45 @@ async function getAccessTokenFast(){
   return null;
 }
 
+function withTimeout(promise, ms, label="Operation timed out"){
+  return Promise.race([
+    promise,
+    new Promise((_, reject)=>setTimeout(()=>reject(new Error(label)), ms))
+  ]);
+}
+
 async function getAccessTokenForProtectedAction(){
+  // Keep this deliberately fast. A user should not be stuck at
+  // "Checking secure login session..." if Supabase session recovery stalls.
   let token=await getAccessTokenFast();
   if(token) return token;
 
   try{
-    const {data}=await fynalhireClient.auth.getSession();
-    if(data?.session?.refresh_token){
-      const refreshed=await fynalhireClient.auth.refreshSession();
+    const sessionResult=await withTimeout(
+      fynalhireClient.auth.getSession(),
+      5000,
+      "Session lookup timed out"
+    );
+
+    if(sessionResult?.data?.session?.access_token && isJwtStillValid(sessionResult.data.session.access_token)){
+      return sessionResult.data.session.access_token;
+    }
+
+    if(sessionResult?.data?.session?.refresh_token){
+      const refreshed=await withTimeout(
+        fynalhireClient.auth.refreshSession(),
+        7000,
+        "Session refresh timed out"
+      );
       const refreshedToken=refreshed?.data?.session?.access_token;
       if(refreshedToken && isJwtStillValid(refreshedToken)) return refreshedToken;
     }
   }catch(e){
-    console.warn("Session refresh failed:",e);
+    console.warn("Protected session recovery failed:",e);
   }
 
-  try{
-    await refreshAuth();
-    const {data}=await fynalhireClient.auth.getSession();
-    const sessionToken=data?.session?.access_token;
-    if(sessionToken && isJwtStillValid(sessionToken)) return sessionToken;
-  }catch(e){
-    console.warn("Final session check failed:",e);
-  }
+  const stored=getStoredSupabaseAccessTokenSafe();
+  if(stored) return stored;
 
   return null;
 }
