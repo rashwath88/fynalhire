@@ -424,7 +424,7 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
       <option value="Bug Report">Bug Report</option>
       <option value="Feature Request">Feature Request</option>
     </select>
-    <input id="feedbackEmail" type="email" placeholder="Your email address (optional)">
+    <input id="feedbackEmail" type="email" placeholder="Your email address (required)" required>
     <textarea id="feedbackMessage" placeholder="Tell us what worked, what did not, or how FynalHire helped you..."></textarea>
     <div id="feedbackStatus" class="auth-status"></div>
     <button type="button" class="btn-primary" style="width:100%;margin-top:10px" onclick="sendFeedbackEmail()">Send Feedback</button>
@@ -755,6 +755,16 @@ function sendFeedbackEmail(){
   const email=(document.getElementById("feedbackEmail")?.value || "").trim();
   const message=(document.getElementById("feedbackMessage")?.value || "").trim();
 
+  if(!email){
+    showFeedbackStatus("Please enter your email address so we can reach out to you.","error");
+    return;
+  }
+
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+    showFeedbackStatus("Please enter a valid email address.","error");
+    return;
+  }
+
   if(!message || message.length<10){
     showFeedbackStatus("Please write a little more feedback before sending.","error");
     return;
@@ -762,7 +772,7 @@ function sendFeedbackEmail(){
 
   const page=window.location.href;
   const plan=currentProfile?.plan ? planLabel(currentProfile.plan) : "Unknown";
-  const userEmail=email || currentUser?.email || "Not provided";
+  const userEmail=email;
   const subject=`FynalHire Feedback - ${type}`;
   const body=`Feedback type: ${type}
 User email: ${userEmail}
