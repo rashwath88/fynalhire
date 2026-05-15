@@ -1686,7 +1686,7 @@ async function getAccessTokenFast(){
   clearLegacyStoredTokens();
 
   try{
-    const timeoutPromise=new Promise((_,reject)=>setTimeout(()=>reject(new Error("Session lookup timeout")),4500));
+    const timeoutPromise=new Promise((_,reject)=>setTimeout(()=>reject(new Error("Session lookup timeout")),12000));
     const sessionPromise=fynalhireClient.auth.getSession();
     const {data,error}=await Promise.race([sessionPromise,timeoutPromise]);
 
@@ -1705,6 +1705,33 @@ async function getAccessTokenFast(){
   return null;
 }
 
+async function getAccessTokenForProtectedAction(){
+  let token=await getAccessTokenFast();
+  if(token) return token;
+
+  try{
+    const {data}=await fynalhireClient.auth.getSession();
+    if(data?.session?.refresh_token){
+      const refreshed=await fynalhireClient.auth.refreshSession();
+      const refreshedToken=refreshed?.data?.session?.access_token;
+      if(refreshedToken && isJwtStillValid(refreshedToken)) return refreshedToken;
+    }
+  }catch(e){
+    console.warn("Session refresh failed:",e);
+  }
+
+  try{
+    await refreshAuth();
+    const {data}=await fynalhireClient.auth.getSession();
+    const sessionToken=data?.session?.access_token;
+    if(sessionToken && isJwtStillValid(sessionToken)) return sessionToken;
+  }catch(e){
+    console.warn("Final session check failed:",e);
+  }
+
+  return null;
+}
+
 async function extractJDFromUrl(event){
   const url=document.getElementById("jdUrl").value.trim();
   const btn=event?.target || document.getElementById("extractJdBtn");
@@ -1718,7 +1745,7 @@ async function extractJDFromUrl(event){
 
   let accessToken=null;
   try{
-    accessToken=await getAccessTokenFast();
+    accessToken=await getAccessTokenForProtectedAction();
   }catch(e){
     console.warn("Session check failed:",e);
   }
@@ -1842,11 +1869,16 @@ async function analyzeWithFynalHireAPI(event){
     setDebug("Preparing analysis...");
 
     setDebug("Checking secure login session...");
-    const accessToken=await getAccessTokenFast();
+    let accessToken=await getAccessTokenForProtectedAction();
 
     if(!accessToken){
-      setDebug("Log in to start your free scan.","error");
-      requireLoginForScan(selectedArea || "jobseeker");
+      await refreshAuth();
+      accessToken=await getAccessTokenForProtectedAction();
+    }
+
+    if(!accessToken){
+      setDebug("Your session has expired. Please log in again to continue.","error");
+      showLoggedOutNotice("Your session has expired. Please log in again to continue.",true);
       return;
     }
 
