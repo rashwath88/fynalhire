@@ -1022,187 +1022,76 @@ async function updateTopUserChip(){
   chip.style.display="inline-block";
 }
 
-function setMyAccountSafeLoadingState(){
-  showPage("account");
-  const set=(id,value)=>{const el=document.getElementById(id); if(el) el.textContent=value;};
-  set("accountName","Loading...");
-  set("accountEmail","Checking your secure session...");
-  set("accountPlan","Loading...");
-  set("accountPlanNote","Loading your account details...");
-  set("accountScans","—");
-  set("accountScansNote","Checking scan allowance...");
-  set("accountExpiry","—");
-  set("accountExpiryNote","Checking subscription status...");
-  const cancelBtn=document.getElementById("accountCancelBtn");
-  const upgradeBtn=document.getElementById("accountUpgradeBtn");
-  if(cancelBtn) cancelBtn.style.display="none";
-  if(upgradeBtn) upgradeBtn.style.display="inline-block";
-}
-
-function setMyAccountErrorState(message){
-  const set=(id,value)=>{const el=document.getElementById(id); if(el) el.textContent=value;};
-  set("accountName","Action needed");
-  set("accountEmail",message || "Please sign in again to view your account.");
-  set("accountPlan","—");
-  set("accountPlanNote","Could not load account details safely.");
-  set("accountScans","—");
-  set("accountScansNote","Scan balance is unavailable until you sign in again.");
-  set("accountExpiry","—");
-  set("accountExpiryNote","Subscription status is unavailable until you sign in again.");
-}
-
-async function getCurrentUserForAccountFast(){
-  // Keep My Account responsive. Do not let Supabase session lookup hang the UI.
-  try{
-    const sessionResult=await withTimeout(fynalhireClient.auth.getSession(),2000,"Account session lookup timed out");
-    const session=sessionResult?.data?.session;
-    if(session?.user){
-      signedIn=true;
-      currentUser=session.user;
-      return currentUser;
-    }
-  }catch(e){
-    console.warn("Account session lookup timed out/failed:",e);
+async function showMyAccount(){
+  await getCurrentUser();
+  if(!currentUser){
+    await refreshAuth();
+  }
+  if(!currentUser){
+    showLoggedOutNotice("Please log in again to view your account.",true);
+    return;
   }
 
-  try{
-    const storedToken=typeof getStoredSupabaseAccessTokenSafe==="function" ? getStoredSupabaseAccessTokenSafe() : null;
-    if(storedToken){
-      const userResult=await withTimeout(fynalhireClient.auth.getUser(storedToken),2500,"Stored token lookup timed out");
-      if(userResult?.data?.user){
-        signedIn=true;
-        currentUser=userResult.data.user;
-        return currentUser;
-      }
-    }
-  }catch(e){
-    console.warn("Stored token lookup failed:",e);
+  await loadUserProfile();
+
+  if(needsStripeSubscriptionSync()){
+    await syncMySubscriptionFromStripe();
+    await loadUserProfile();
   }
 
-  return currentUser || null;
-}
+  await updateTopUserChip();
 
-async function loadProfileForAccountFast(userId){
-  if(!userId) return currentProfile || null;
-  try{
-    const result=await withTimeout(
-      fynalhireClient
-        .from("profiles")
-        .select("id,email,user_type,plan,subscription_status,subscription_current_period_start,subscription_current_period_end,stripe_customer_id,stripe_subscription_id,stripe_price_id,plan_started_at,plan_expires_at,plan_status,created_at")
-        .eq("id",userId)
-        .maybeSingle(),
-      4500,
-      "Profile lookup timed out"
-    );
-
-    if(result?.data){
-      currentProfile=result.data;
-      selectedArea=currentProfile.user_type || selectedArea || "jobseeker";
-      localStorage.setItem("fh_area",selectedArea);
-      return currentProfile;
-    }
-
-    if(result?.error){
-      console.warn("Profile lookup error:",result.error);
-    }
-  }catch(e){
-    console.warn("Profile lookup failed/timed out:",e);
-  }
-  return currentProfile || null;
-}
-
-async function renderMyAccountFromProfile(){
-  const set=(id,value)=>{const el=document.getElementById(id); if(el) el.textContent=value;};
-  const show=(id,display)=>{const el=document.getElementById(id); if(el) el.style.display=display;};
-
-  const user=currentUser;
-  const profile=currentProfile || {};
-  const plan=normalizePlan(profile.plan || (selectedArea==="recruiter" ? "rec_free" : "free"));
-  const type=profile.user_type || selectedArea || "jobseeker";
-  const created=user?.created_at ? new Date(user.created_at).toLocaleDateString() : (profile.created_at ? new Date(profile.created_at).toLocaleDateString() : "—");
+  const usage=await getScanUsage();
+  const plan=normalizePlan(currentProfile?.plan || (selectedArea==="recruiter" ? "rec_free" : "free"));
+  const type=currentProfile?.user_type || selectedArea || "jobseeker";
+  const created=currentUser?.created_at ? new Date(currentUser.created_at).toLocaleDateString() : "—";
   const status=String(effectivePlanStatus() || (isFreePlan(plan)?"free":"active")).toLowerCase();
   const expiryRaw=effectivePlanExpiry();
   const expiry=formatFynalHireDate(expiryRaw);
   const active=isPlanCurrentlyActive();
-  const paidPlanLabel=planLabel(plan);
+  const customerId=currentProfile?.stripe_customer_id || "Not linked yet";
+  const subscriptionId=currentProfile?.stripe_subscription_id || "Not linked yet";
 
-  let usage={used:0,limit:freeScanLimitForProfile(),left:freeScanLimitForProfile()};
-  try{
-    usage=await withTimeout(getScanUsage(),3000,"Usage lookup timed out");
-  }catch(e){
-    console.warn("Usage lookup failed/timed out:",e);
-  }
+  document.getElementById("accountName").textContent=getFirstNameFromUser();
+  document.getElementById("accountEmail").textContent=currentUser.email || currentProfile?.email || "—";
+  document.getElementById("accountPlan").textContent=planLabel(plan);
 
-  set("accountName",getFirstNameFromUser());
-  set("accountEmail",user?.email || profile.email || "—");
-  set("accountPlan",planLabel(plan));
+  const cancelBtn=document.getElementById("accountCancelBtn");
 
   if(isFreePlan(plan)){
-    set("accountPlanNote",`Account type: ${type==="recruiter" ? "Recruiter" : "Job Seeker"} · Status: Free · Created: ${created}`);
-    set("accountScans",`${usage.left} / ${usage.limit}`);
-    set("accountScansNote",type==="recruiter" ? "Recruiter Free includes 2 scans per month. Your allowance resets monthly." : "Free Job Seekers get 3 scans per month. Your allowance resets monthly.");
-    set("accountExpiry","Not applicable");
-    set("accountExpiryNote","Free plans do not have a subscription expiry. Free scan allowance resets monthly.");
-    show("accountUpgradeBtn","inline-block");
-    show("accountCancelBtn","none");
-    return;
-  }
-
-  const cancelling=status==="cancel_at_period_end" || status==="active_until_expiry";
-  const billingStatus=cancelling ? "Cancels at period end" : (active ? "Active" : (status ? status.charAt(0).toUpperCase()+status.slice(1) : "Active"));
-  set("accountPlanNote",`Billing: ${billingStatus} · Subscription: ${cancelling ? "No further renewal" : "Monthly renewal"}`);
-  set("accountScans","Unlimited");
-  set("accountScansNote",`Unlimited scans are included with your ${paidPlanLabel} plan.`);
-  set("accountExpiry",expiryRaw ? expiry : "Syncing");
-
-  if(!active){
-    set("accountExpiryNote","Your paid access is not active or the subscription period has ended. Please renew or contact support.");
-    show("accountUpgradeBtn","inline-block");
-    show("accountCancelBtn","none");
-  }else if(cancelling){
-    set("accountExpiryNote",expiryRaw ? `Your renewal is cancelled. Your plan remains active until ${expiry}.` : "Your renewal is cancelled. Your plan remains active until the current paid period ends.");
-    show("accountUpgradeBtn",(plan==="elite" || plan==="rec_premium") ? "none" : "inline-block");
-    show("accountCancelBtn","none");
+    document.getElementById("accountPlanNote").textContent=`Account type: ${type==="recruiter" ? "Recruiter" : "Job Seeker"} · Status: Free · Created: ${created}`;
+    document.getElementById("accountScans").textContent=`${usage.left} / ${usage.limit}`;
+    const scansNote=document.getElementById("accountScansNote");
+    if(scansNote) scansNote.textContent=type==="recruiter" ? "Recruiter Free includes 2 scans per month. Your allowance resets monthly." : "Free Job Seekers get 3 scans per month. Your allowance resets monthly.";
+    document.getElementById("accountExpiry").textContent="Not applicable";
+    document.getElementById("accountExpiryNote").textContent="Free plans do not have a subscription expiry. Free scan allowance resets monthly.";
+    document.getElementById("accountUpgradeBtn").style.display="inline-block";
+    if(cancelBtn) cancelBtn.style.display="none";
   }else{
-    set("accountExpiryNote",expiryRaw ? "Your subscription is active. This is your next renewal / validity date." : "Your subscription is active. Renewal date is still being synced from Stripe.");
-    show("accountUpgradeBtn",(plan==="elite" || plan==="rec_premium") ? "none" : "inline-block");
-    show("accountCancelBtn",profile.stripe_subscription_id ? "inline-block" : "none");
-  }
-}
-
-async function showMyAccount(){
-  // Open page first. This prevents the tab from feeling dead or stuck on another page.
-  setMyAccountSafeLoadingState();
-
-  try{
-    const user=await getCurrentUserForAccountFast();
-    if(!user){
-      setMyAccountErrorState("Your session has ended. Please log in again to view your account.");
-      showLoggedOutNotice("Please log in again to view your account.",true);
-      return;
+    const paidPlanLabel=planLabel(plan);
+    const cancelling=status==="cancel_at_period_end" || status==="active_until_expiry";
+    const billingStatus=cancelling ? "Cancels at period end" : (active ? "Active" : status.charAt(0).toUpperCase()+status.slice(1));
+    document.getElementById("accountPlanNote").textContent=`Billing: ${billingStatus} · Subscription: ${cancelling ? "No further renewal" : "Monthly renewal"}`;
+    document.getElementById("accountScans").textContent="Unlimited";
+    const scansNote=document.getElementById("accountScansNote");
+    if(scansNote) scansNote.textContent=`Unlimited scans are included with your ${paidPlanLabel} plan.`;
+    document.getElementById("accountExpiry").textContent=expiryRaw ? expiry : "Syncing";
+    if(!active){
+      document.getElementById("accountExpiryNote").textContent="Your paid access is not active or the subscription period has ended. Please renew or contact support.";
+      document.getElementById("accountUpgradeBtn").style.display="inline-block";
+      if(cancelBtn) cancelBtn.style.display="none";
+    }else if(cancelling){
+      document.getElementById("accountExpiryNote").textContent=expiryRaw ? `Your renewal is cancelled. Your plan remains active until ${expiry}.` : "Your renewal is cancelled. Your plan remains active until the current paid period ends.";
+      document.getElementById("accountUpgradeBtn").style.display=(plan==="elite" || plan==="rec_premium") ? "none" : "inline-block";
+      if(cancelBtn) cancelBtn.style.display="none";
+    }else{
+      document.getElementById("accountExpiryNote").textContent=expiryRaw ? "Your subscription is active. This is your next renewal / validity date." : "Your subscription is active. Renewal date is still being synced from Stripe.";
+      document.getElementById("accountUpgradeBtn").style.display=(plan==="elite" || plan==="rec_premium") ? "none" : "inline-block";
+      if(cancelBtn) cancelBtn.style.display=currentProfile?.stripe_subscription_id ? "inline-block" : "none";
     }
-
-    await loadProfileForAccountFast(user.id);
-
-    // Render immediately from the current database/profile state.
-    await renderMyAccountFromProfile();
-    updateTopUserChip().catch(e=>console.warn("Top chip refresh failed:",e));
-
-    // Optional Stripe sync runs in the background only. It must never block My Account UI.
-    if(needsStripeSubscriptionSync()){
-      withTimeout(syncMySubscriptionFromStripe(),5000,"Stripe subscription sync timed out")
-        .then(async()=>{
-          await loadProfileForAccountFast(user.id);
-          await renderMyAccountFromProfile();
-          updateTopUserChip().catch(()=>{});
-        })
-        .catch(e=>console.warn("Background Stripe sync skipped/failed:",e));
-    }
-  }catch(e){
-    console.error("My Account rendering failed:",e);
-    setMyAccountErrorState("Could not load account details. Please refresh or sign in again.");
-    showGlobalNotice("Could not load My Account details. Please refresh or sign in again.","warning");
   }
+
+  showPage("account");
 }
 
 async function cancelSubscriptionAtPeriodEnd(){
@@ -2458,6 +2347,283 @@ function cleanPaymentUrl(){
     window.history.replaceState({},document.title,cleanUrl);
   }catch(e){}
 }
+
+
+/* ==== FYNALHIRE STABILITY OVERRIDE: navigation + My Account must never block the app ==== */
+
+function fhTimeout(promise, ms, label){
+  return Promise.race([
+    promise,
+    new Promise((_, reject)=>setTimeout(()=>reject(new Error(label || "Request timed out")), ms))
+  ]);
+}
+
+function fhSetText(id, value){
+  const el=document.getElementById(id);
+  if(el) el.textContent=value;
+}
+
+function fhSetDisplay(id, value){
+  const el=document.getElementById(id);
+  if(el) el.style.display=value;
+}
+
+function fhGetKnownAccountType(){
+  return currentProfile?.user_type || localStorage.getItem("fh_area") || selectedArea || "jobseeker";
+}
+
+async function fhQuickSession(){
+  try{
+    const sessionResult=await fhTimeout(fynalhireClient.auth.getSession(), 2200, "Session check timed out");
+    if(sessionResult?.data?.session){
+      signedIn=true;
+      currentUser=sessionResult.data.session.user;
+      return sessionResult.data.session;
+    }
+  }catch(e){
+    console.warn("Quick session check failed:", e);
+  }
+
+  try{
+    const stored=typeof getStoredSupabaseAccessTokenSafe==="function" ? getStoredSupabaseAccessTokenSafe() : null;
+    if(stored){
+      const userResult=await fhTimeout(fynalhireClient.auth.getUser(stored), 2200, "Stored user check timed out");
+      if(userResult?.data?.user){
+        signedIn=true;
+        currentUser=userResult.data.user;
+        return {user:currentUser, access_token:stored};
+      }
+    }
+  }catch(e){
+    console.warn("Stored session recovery failed:", e);
+  }
+
+  return null;
+}
+
+async function fhQuickProfile(){
+  try{
+    const session=await fhQuickSession();
+    if(!session?.user && !currentUser) return currentProfile || null;
+
+    const userId=(session?.user || currentUser).id;
+    const {data,error}=await fhTimeout(
+      fynalhireClient
+        .from("profiles")
+        .select("id,email,user_type,plan,subscription_status,subscription_current_period_start,subscription_current_period_end,stripe_customer_id,stripe_subscription_id,stripe_price_id,plan_started_at,plan_expires_at,plan_status,created_at")
+        .eq("id",userId)
+        .single(),
+      4500,
+      "Profile load timed out"
+    );
+
+    if(error) throw error;
+    if(data){
+      currentProfile=data;
+      selectedArea=data.user_type || selectedArea || "jobseeker";
+      localStorage.setItem("fh_area", selectedArea);
+      return data;
+    }
+  }catch(e){
+    console.warn("Quick profile load failed:", e);
+  }
+  return currentProfile || null;
+}
+
+function fhRenderAccountFromState(profile, usage){
+  const user=currentUser || {};
+  const fallbackType=fhGetKnownAccountType();
+  const plan=normalizePlan(profile?.plan || (fallbackType==="recruiter" ? "rec_free" : "free"));
+  const type=profile?.user_type || fallbackType || "jobseeker";
+  const created=user?.created_at ? new Date(user.created_at).toLocaleDateString() : "—";
+  const status=String((profile?.plan_status || profile?.subscription_status || (isFreePlan(plan) ? "free" : "active")) || "").toLowerCase();
+  const expiryRaw=profile?.plan_expires_at || profile?.subscription_current_period_end || null;
+  const expiry=formatFynalHireDate(expiryRaw);
+  const active=(()=> {
+    if(isFreePlan(plan)) return true;
+    if(["cancelled","expired","refunded","disputed","past_due","unpaid","incomplete","incomplete_expired"].includes(status)) return false;
+    if(expiryRaw && new Date(expiryRaw).getTime() < Date.now()) return false;
+    return true;
+  })();
+
+  fhSetText("accountName", getFirstNameFromUser());
+  fhSetText("accountEmail", user.email || profile?.email || "—");
+  fhSetText("accountPlan", planLabel(plan));
+
+  const cancelBtn=document.getElementById("accountCancelBtn");
+
+  if(isFreePlan(plan)){
+    fhSetText("accountPlanNote", `Account type: ${type==="recruiter" ? "Recruiter" : "Job Seeker"} · Status: Free · Created: ${created}`);
+    const limit=usage?.limit ?? (type==="recruiter" ? 2 : 3);
+    const left=usage?.left ?? limit;
+    fhSetText("accountScans", `${left} / ${limit}`);
+    fhSetText("accountScansNote", type==="recruiter" ? "Recruiter Free includes 2 scans per month. Your allowance resets monthly." : "Free Job Seekers get 3 scans per month. Your allowance resets monthly.");
+    fhSetText("accountExpiry", "Not applicable");
+    fhSetText("accountExpiryNote", "Free plans do not have a subscription expiry. Free scan allowance resets monthly.");
+    fhSetDisplay("accountUpgradeBtn", "inline-block");
+    if(cancelBtn) cancelBtn.style.display="none";
+    return;
+  }
+
+  const paidPlanLabel=planLabel(plan);
+  const cancelling=status==="cancel_at_period_end" || status==="active_until_expiry";
+  const billingStatus=cancelling ? "Cancels at period end" : (active ? "Active" : (status ? status.charAt(0).toUpperCase()+status.slice(1) : "Active"));
+
+  fhSetText("accountPlanNote", `Billing: ${billingStatus} · Subscription: ${cancelling ? "No further renewal" : "Monthly renewal"}`);
+  fhSetText("accountScans", "Unlimited");
+  fhSetText("accountScansNote", `Unlimited scans are included with your ${paidPlanLabel} plan.`);
+  fhSetText("accountExpiry", expiryRaw ? expiry : "Syncing");
+
+  if(!active){
+    fhSetText("accountExpiryNote", "Your paid access is not active or the subscription period has ended. Please renew or contact support.");
+    fhSetDisplay("accountUpgradeBtn", "inline-block");
+    if(cancelBtn) cancelBtn.style.display="none";
+  }else if(cancelling){
+    fhSetText("accountExpiryNote", expiryRaw ? `Your renewal is cancelled. Your plan remains active until ${expiry}.` : "Your renewal is cancelled. Your plan remains active until the current paid period ends.");
+    fhSetDisplay("accountUpgradeBtn", (plan==="elite" || plan==="rec_premium") ? "none" : "inline-block");
+    if(cancelBtn) cancelBtn.style.display="none";
+  }else{
+    fhSetText("accountExpiryNote", expiryRaw ? "Your subscription is active. This is your next renewal / validity date." : "Your subscription is active. Renewal date is still being synced from Stripe.");
+    fhSetDisplay("accountUpgradeBtn", (plan==="elite" || plan==="rec_premium") ? "none" : "inline-block");
+    if(cancelBtn) cancelBtn.style.display=profile?.stripe_subscription_id ? "inline-block" : "none";
+  }
+}
+
+async function showMyAccount(){
+  // Never allow My Account to block the rest of the app.
+  showPage("account");
+
+  fhSetText("accountName", "Loading...");
+  fhSetText("accountEmail", "Checking secure session...");
+  fhSetText("accountPlan", "Loading...");
+  fhSetText("accountPlanNote", "Loading account details...");
+  fhSetText("accountScans", "—");
+  fhSetText("accountScansNote", "Checking scan allowance...");
+  fhSetText("accountExpiry", "—");
+  fhSetText("accountExpiryNote", "Checking subscription status...");
+
+  const session=await fhQuickSession();
+  if(!session?.user && !currentUser){
+    fhSetText("accountName", "Not signed in");
+    fhSetText("accountEmail", "Please log in again to view your account.");
+    fhSetText("accountPlan", "—");
+    fhSetText("accountPlanNote", "Session not found.");
+    fhSetText("accountScans", "—");
+    fhSetText("accountScansNote", "Log in to see scan allowance.");
+    fhSetText("accountExpiry", "—");
+    fhSetText("accountExpiryNote", "Log in to see subscription status.");
+    showLoggedOutNotice("Please log in again to view your account.", true);
+    return;
+  }
+
+  const profile=await fhQuickProfile();
+  try{
+    if(profile && needsStripeSubscriptionSync()){
+      await fhTimeout(syncMySubscriptionFromStripe(), 4500, "Subscription sync timed out");
+      await fhQuickProfile();
+    }
+  }catch(e){
+    console.warn("Subscription sync skipped:", e);
+  }
+
+  let usage=null;
+  try{
+    if(isFreePlan(currentProfile?.plan || "free")){
+      usage=await fhTimeout(getScanUsage(), 3500, "Usage load timed out");
+    }
+  }catch(e){
+    console.warn("Usage load skipped:", e);
+  }
+
+  fhRenderAccountFromState(currentProfile || profile, usage);
+  updateTopUserChip().catch(e=>console.warn("Top chip refresh skipped:", e));
+}
+
+function enterArea(area){
+  // Navigate immediately. Session/profile refresh happens in the background.
+  const knownType=currentProfile?.user_type || selectedArea || area || "jobseeker";
+  if(currentProfile?.user_type && area && area!==currentProfile.user_type){
+    guardRoleAccess(area,"area access").catch(()=>{});
+    return;
+  }
+
+  selectedArea=knownType;
+  localStorage.setItem("fh_area", selectedArea);
+
+  const appTitle=document.getElementById("appTitle");
+  const appSub=document.getElementById("appSub");
+  const cvHeading=document.getElementById("cvHeading");
+  const analyzeBtn=document.getElementById("analyzeBtn");
+
+  if(appTitle) appTitle.textContent=selectedArea==="recruiter" ? "Recruiter Screening Area" : "Job Seeker CV Scanner";
+  if(appSub) appSub.textContent=selectedArea==="recruiter" ? "Compare candidates against the role requirement, surface shortlist risks and prepare a faster hiring decision." : "Upload or paste your CV and compare it with a job description.";
+  if(cvHeading) cvHeading.textContent=selectedArea==="recruiter" ? "Candidate CV" : "CV / Resume";
+  if(analyzeBtn){
+    analyzeBtn.disabled=false;
+    analyzeBtn.textContent="Analyze CV";
+  }
+
+  showPage("app");
+
+  fhQuickProfile().then(profile=>{
+    if(profile?.user_type){
+      selectedArea=profile.user_type;
+      localStorage.setItem("fh_area", selectedArea);
+      if(appTitle) appTitle.textContent=selectedArea==="recruiter" ? "Recruiter Screening Area" : "Job Seeker CV Scanner";
+      if(appSub) appSub.textContent=selectedArea==="recruiter" ? "Compare candidates against the role requirement, surface shortlist risks and prepare a faster hiring decision." : "Upload or paste your CV and compare it with a job description.";
+      if(cvHeading) cvHeading.textContent=selectedArea==="recruiter" ? "Candidate CV" : "CV / Resume";
+    }
+    updateTopUserChip().catch(()=>{});
+  }).catch(()=>{});
+}
+
+async function startAreaFlow(type){
+  const session=await fhQuickSession();
+  if(!session?.user && !currentUser){
+    requireLoginForScan(type || selectedArea || "jobseeker");
+    return;
+  }
+
+  const profile=await fhQuickProfile();
+  if(profile?.user_type && type && profile.user_type!==type){
+    await guardRoleAccess(type,"area access");
+    return;
+  }
+
+  enterArea(profile?.user_type || type || selectedArea || "jobseeker");
+}
+
+async function openUserTypeModal(purpose){
+  userTypePurpose=purpose||"scan";
+
+  const session=await fhQuickSession();
+  if(session?.user || currentUser){
+    const profile=await fhQuickProfile();
+    const type=profile?.user_type || selectedArea || "jobseeker";
+    if(userTypePurpose==="pricing") showPricingFor(type);
+    else enterArea(type);
+    return;
+  }
+
+  const modal=document.getElementById("userTypeModal");
+  if(modal) modal.style.display="flex";
+}
+
+function showPage(page){
+  // Clear any stuck modal/disabled transient state when navigating between app pages.
+  document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
+  const target=document.getElementById("page-"+page);
+  if(target) target.classList.add("active");
+
+  const analyzeBtn=document.getElementById("analyzeBtn");
+  if(page==="app" && analyzeBtn && analyzeBtn.textContent!=="Analyzing"){
+    analyzeBtn.disabled=false;
+  }
+
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+
+/* ==== END STABILITY OVERRIDE ==== */
 
 window.addEventListener("focus",()=>{
   ensureFreshSession().then(()=>updateTopUserChip()).catch(()=>{});
