@@ -624,6 +624,7 @@ let idleSeconds=900;
 let idleInterval=null;
 let currentUser=null;
 let currentProfile=null;
+let suppressNextLogoutNotice=false;
 
 const SUBSCRIPTION_CHECKOUT_FUNCTION="create-subscription-checkout";
 const SYNC_SUBSCRIPTION_FUNCTION="sync-my-subscription";
@@ -709,7 +710,7 @@ async function saveUserRole(type){
   await getCurrentUser();
   if(!currentUser){
     closeRoleSetup();
-    openAuthWithMessage("Please log in to continue.","Log in required");
+    showLoggedOutNotice("Please log in again to continue.",true);
     return;
   }
 
@@ -1016,6 +1017,15 @@ function openAuthWithMessage(message,title="Sign In / Create Account"){
   openAuth();
 }
 
+function showLoggedOutNotice(message="You have been logged out. Please log in again to continue.",openModal=false){
+  showGlobalNotice(message,"warning");
+  const btn=document.getElementById("authTopBtn");
+  if(btn) btn.textContent="Log In Again";
+  if(openModal){
+    openAuthWithMessage(message,"Please log in again");
+  }
+}
+
 function requireLoginForScan(area){
   selectedArea=area || selectedArea || "jobseeker";
   localStorage.setItem("fh_area",selectedArea);
@@ -1141,22 +1151,29 @@ async function handleAuthButton(){
 
 async function refreshAuth(){
   try{
+    const wasSignedIn=signedIn;
     const {data}=await fynalhireClient.auth.getSession();
     signedIn=!!data.session;
-    currentUser=data && data.session ? data.session.user : currentUser;
+    currentUser=data && data.session ? data.session.user : null;
     const btn=document.getElementById("authTopBtn");
     const chip=document.getElementById("userChip");
     if(signedIn){
-      btn.textContent="Sign Out";
+      if(btn) btn.textContent="Sign Out";
       await loadUserProfile();
       await updateTopUserChip();
       startIdleTimer();
     }else{
-      btn.textContent="Sign In";
+      if(btn) btn.textContent="Sign In";
       if(chip){ chip.textContent=""; chip.style.display="none"; }
       const accountNav=document.getElementById("myAccountNav");
       if(accountNav) accountNav.style.display="none";
       stopIdleTimer();
+      currentUser=null;
+      currentProfile=null;
+      if(wasSignedIn && !suppressNextLogoutNotice){
+        showLoggedOutNotice("Your session has ended. Please log in again to continue.",true);
+      }
+      suppressNextLogoutNotice=false;
     }
   }catch(e){ console.error("refreshAuth failed",e); }
 }
@@ -1296,15 +1313,23 @@ async function handleOAuthReturn(){
 }
 
 
-async function logoutUser(){
+async function logoutUser(reason="manual"){
   if(typeof clearLegacyStoredTokens === 'function') clearLegacyStoredTokens();
+  suppressNextLogoutNotice=true;
   await fynalhireClient.auth.signOut();
   signedIn=false;
+  currentUser=null;
+  currentProfile=null;
   stopIdleTimer();
   showPage("home");
   await refreshAuth();
-  await handleOAuthReturn();
+  if(reason==="inactivity"){
+    showLoggedOutNotice("For your security, you were logged out due to inactivity. Please log in again to continue.",true);
+  }else{
+    showLoggedOutNotice("You have been logged out. Please log in again to continue.",false);
+  }
 }
+
 
 async function afterSuccessfulLogin(){
   await routeAfterLogin();
@@ -1316,14 +1341,14 @@ async function requireLogin(area){
   try{
     const {data}=await fynalhireClient.auth.getSession();
     if(!data || !data.session){
-      openAuthWithMessage("Please log in to continue.","Log in required");
+      showLoggedOutNotice("Please log in again to continue.",true);
       return false;
     }
     signedIn=true;
     return true;
   }catch(e){
     console.warn("Auth check failed:",e);
-    openAuthWithMessage("Please log in again to continue.","Log in required");
+    showLoggedOutNotice("Please log in again to continue.",true);
     return false;
   }
 }
@@ -1452,9 +1477,7 @@ function startIdleTimer(){
     idleSeconds--;
     updateIdleDisplay();
     if(idleSeconds<=0){
-      await logoutUser();
-      showGlobalNotice("For your security, you’ve been logged out due to inactivity. Please log in again to continue.","warning");
-      openAuthWithMessage("For your security, you’ve been logged out due to inactivity. Please log in again to continue.","Session expired");
+      await logoutUser("inactivity");
     }
   },1000);
 }
