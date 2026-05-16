@@ -581,7 +581,7 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
   </div>
   <textarea id="jdText" placeholder="Paste Job Description here..."></textarea>
 </div>
-        <div><h3 id="cvHeading">CV / Resume</h3><div class="upload"><input type="file" id="cvFile" accept=".txt,.pdf,.doc,.docx" onchange="handleCVUpload(event)"><div id="uploadText">📄 Upload CV — PDF / Word / TXT</div><small id="uploadNote">TXT can be read now. PDF/Word extraction will be completed through backend parser.</small></div><textarea id="cvText" placeholder="Or paste CV text here..."></textarea></div>
+        <div><h3 id="cvHeading">CV / Resume</h3><div class="upload"><input type="file" id="cvFile" accept=".txt,.pdf,.doc,.docx" onchange="handleCVUpload(event)"><div id="uploadText">📄 Upload CV — PDF / DOCX / TXT</div><small id="uploadNote">Upload a PDF, DOCX or TXT CV. Scanned image PDFs may still need manual paste.</small></div><textarea id="cvText" placeholder="Or paste CV text here..."></textarea></div>
       </div>
       <button type="button" id="analyzeBtn" class="btn-primary" style="margin-top:20px;width:100%" onclick="analyzeWithFynalHireAPI(event)">Analyze CV</button><div id="analyzeDebug" class="fh-debug-line"></div>
       <div class="status" id="analysisStatus"></div>
@@ -2116,16 +2116,70 @@ function stopIdleTimer(){
 }
 ["click","keydown","mousemove","scroll","touchstart"].forEach(ev=>document.addEventListener(ev,resetIdle,{passive:true}));
 
-function handleCVUpload(event){
+async function handleCVUpload(event){
   const file=event.target.files&&event.target.files[0];
   if(!file)return;
-  document.getElementById("uploadText").textContent="✓ "+file.name;
-  if(file.name.toLowerCase().endsWith(".txt")){
-    const r=new FileReader();
-    r.onload=e=>{document.getElementById("cvText").value=e.target.result||"";document.getElementById("uploadNote").textContent="TXT file loaded successfully.";};
-    r.readAsText(file);
-  }else{
-    document.getElementById("uploadNote").textContent="File attached. PDF/Word text extraction will be completed through backend parser. For now, paste CV text below.";
+
+  const uploadText=document.getElementById("uploadText");
+  const uploadNote=document.getElementById("uploadNote");
+  const cvBox=document.getElementById("cvText");
+
+  uploadText.textContent="✓ "+file.name;
+  uploadNote.textContent="Reading CV file...";
+  uploadNote.style.color="#64748b";
+
+  const lower=file.name.toLowerCase();
+  if(lower.endsWith(".doc")){
+    uploadNote.textContent="Old .doc files are not supported yet. Please upload DOCX, PDF, TXT, or paste the CV text manually.";
+    uploadNote.style.color="#991b1b";
+    return;
+  }
+
+  try{
+    const accessToken=await getAccessTokenFast();
+    if(!accessToken){
+      uploadNote.textContent="Please log in before uploading a CV.";
+      uploadNote.style.color="#991b1b";
+      openAuthWithMessage("Please log in before uploading a CV.","Log in required");
+      return;
+    }
+
+    const form=new FormData();
+    form.append("file",file,file.name);
+
+    const res=await fetch(`${FYNALHIRE_SUPABASE_URL}/functions/v1/extract-cv`,{
+      method:"POST",
+      headers:{
+        "Authorization":`Bearer ${accessToken}`,
+        "apikey":FYNALHIRE_SUPABASE_KEY
+      },
+      body:form
+    });
+
+    let data={};
+    try{data=await res.json();}catch(_){data={message:"Could not read the extraction response."};}
+
+    if(!res.ok || !data.success){
+      const msg=data.message || data.error || "Could not extract this CV clearly.";
+      uploadNote.textContent=msg+" Please paste the CV text manually if needed.";
+      uploadNote.style.color="#991b1b";
+      return;
+    }
+
+    const extracted=(data.text || "").trim();
+    if(!extracted || extracted.length<80){
+      uploadNote.textContent="The file was uploaded, but very little readable CV text was found. If this is a scanned/image PDF, please paste the CV text manually.";
+      uploadNote.style.color="#991b1b";
+      return;
+    }
+
+    cvBox.value=extracted;
+    uploadNote.textContent=`CV extracted successfully from ${data.file_type ? data.file_type.toUpperCase() : "file"}. Please review before analysis.`;
+    uploadNote.style.color="#166534";
+  }catch(e){
+    console.error("CV extraction failed:",e);
+    uploadNote.textContent="CV extraction failed: "+(e.message || "Unknown error")+". Please paste the CV text manually.";
+    uploadNote.style.color="#991b1b";
   }
 }
 
