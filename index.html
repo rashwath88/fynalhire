@@ -1359,7 +1359,7 @@ function resetScannerForNewScan(){
     if(cv) cv.value="";
     if(file) file.value="";
     if(uploadText) uploadText.textContent="📄 Upload CV — PDF / Word / TXT";
-    if(uploadNote) uploadNote.textContent="TXT can be read now. PDF/Word extraction will be completed through backend parser.";
+    if(uploadNote) uploadNote.textContent="TXT, DOCX and text-based PDF files can be read automatically. Scanned or image-only PDFs may need manual copy-paste.";
     if(results){results.style.display="none";results.innerHTML="";}
     if(status){status.style.display="none";status.innerHTML="";}
     if(debug){debug.style.display="none";debug.textContent="";}
