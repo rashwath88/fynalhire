@@ -424,6 +424,7 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
       <option value="Bug Report">Bug Report</option>
       <option value="Feature Request">Feature Request</option>
     </select>
+    <input id="feedbackName" type="text" placeholder="Your name (optional)">
     <input id="feedbackEmail" type="email" placeholder="Your email address (required)" required>
     <textarea id="feedbackMessage" placeholder="Tell us what worked, what did not, or how FynalHire helped you..."></textarea>
     <div id="feedbackStatus" class="auth-status"></div>
@@ -753,6 +754,7 @@ function showFeedbackStatus(message,type=""){
 
 async function sendFeedbackEmail(){
   const type=(document.getElementById("feedbackType")?.value || "General Feedback").trim();
+  const name=(document.getElementById("feedbackName")?.value || "").trim();
   const email=(document.getElementById("feedbackEmail")?.value || "").trim();
   const message=(document.getElementById("feedbackMessage")?.value || "").trim();
   const sendBtn=Array.from(document.querySelectorAll("button")).find(btn=>btn.textContent?.trim()==="Send Feedback");
@@ -777,9 +779,12 @@ async function sendFeedbackEmail(){
     showFeedbackStatus("Sending your feedback securely...","success");
 
     const payload={
+      name,
       type,
+      feedback_type:type,
       email,
       message,
+      page_url:window.location.href,
       page:window.location.href,
       plan:currentProfile?.plan ? planLabel(currentProfile.plan) : "Unknown",
       user_type:currentProfile?.user_type || selectedArea || "unknown",
@@ -791,22 +796,26 @@ async function sendFeedbackEmail(){
 
     if(error){
       console.error("Feedback submission error:",error);
-      showFeedbackStatus(error.message || "Feedback could not be sent. Please try again or email info@fynalhire.com.","error");
+      showFeedbackStatus("Feedback could not be submitted right now. Please try again, or contact info@fynalhire.com if the issue continues.","error");
       return;
     }
 
-    if(data?.ok){
-      showFeedbackStatus("Thank you. Your feedback has been sent to the FynalHire team.","success");
+    if(data?.ok || data?.saved || data?.emailed){
+      let msg="Thank you. Your feedback has been received by the FynalHire team.";
+      if(data?.saved && !data?.emailed){
+        msg="Thank you. Your feedback has been saved. If email delivery is temporarily unavailable, our team can still review it in the system.";
+      }
+      showFeedbackStatus(msg,"success");
       const messageBox=document.getElementById("feedbackMessage");
       if(messageBox) messageBox.value="";
-      setTimeout(()=>closeFeedbackModal(),1400);
+      setTimeout(()=>closeFeedbackModal(),1600);
       return;
     }
 
     showFeedbackStatus(data?.message || "Feedback received. Thank you for helping us improve.","success");
   }catch(e){
     console.error("Feedback exception:",e);
-    showFeedbackStatus("Feedback could not be sent right now. Please try again or contact info@fynalhire.com.","error");
+    showFeedbackStatus("Feedback could not be submitted right now. Please try again, or contact info@fynalhire.com if the issue continues.","error");
   }finally{
     if(sendBtn){sendBtn.disabled=false;sendBtn.textContent="Send Feedback";}
   }
