@@ -389,6 +389,42 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
   .feedback-float-btn{right:14px;bottom:14px;padding:12px 14px;font-size:13px}
 }
 
+
+/* Saved report modal */
+.saved-report-modal .auth-modal{
+  max-width:980px;
+  max-height:88vh;
+  overflow:auto;
+}
+.saved-report-head{
+  display:flex;
+  justify-content:space-between;
+  gap:16px;
+  align-items:flex-start;
+  margin-bottom:14px;
+}
+.saved-report-meta{
+  color:#64748b;
+  font-size:13px;
+  line-height:1.5;
+}
+.saved-report-actions{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+  margin:14px 0 20px;
+}
+.report-lock-note{
+  border:1.5px solid #f59e0b;
+  background:#fef3c7;
+  color:#92400e;
+  border-radius:14px;
+  padding:14px;
+  font-weight:800;
+  line-height:1.5;
+  margin:12px 0;
+}
+
 </style>
 </head>
 <body>
@@ -429,6 +465,17 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
     <div id="feedbackStatus" class="auth-status"></div>
     <button type="button" class="btn-primary" style="width:100%;margin-top:10px" onclick="sendFeedbackEmail()">Send Feedback</button>
     <p class="feedback-small">Your feedback will be sent securely to our team. Please include your email so we can thank you, follow up, or learn from your experience.</p>
+  </div>
+</div>
+
+
+<div id="savedReportModal" class="auth-modal-overlay saved-report-modal">
+  <div class="auth-modal">
+    <button type="button" class="auth-close" onclick="closeSavedReportModal()">Close</button>
+    <div id="savedReportContent">
+      <h2>Saved Report</h2>
+      <p class="account-muted">Loading report...</p>
+    </div>
   </div>
 </div>
 
@@ -714,6 +761,7 @@ let currentUser=null;
 let currentProfile=null;
 let suppressNextLogoutNotice=false;
 let pendingSignupRole=localStorage.getItem("fh_pending_signup_role")||"";
+let cloudScanHistoryItems=[];
 
 const SUBSCRIPTION_CHECKOUT_FUNCTION="create-subscription-checkout";
 const SYNC_SUBSCRIPTION_FUNCTION="sync-my-subscription";
@@ -1461,57 +1509,171 @@ async function renderScanHistory(){
   if(!paid){
     section.style.display="none";
     list.innerHTML="";
+    cloudScanHistoryItems=[];
     return;
   }
 
   section.style.display="block";
-  if(note) note.textContent="Loading your saved scan history from your FynalHire account...";
+  if(note) note.textContent="Loading saved scan history from your FynalHire account...";
   list.innerHTML='<p class="account-muted">Loading recent scans...</p>';
 
-  let cloudItems=[];
+  let items=[];
   try{
-    const {data,error}=await fynalhireClient.functions.invoke(GET_SCAN_HISTORY_FUNCTION,{body:{limit:12}});
+    const {data,error}=await fynalhireClient.functions.invoke(GET_SCAN_HISTORY_FUNCTION,{body:{limit:12,include_report:true}});
     if(error) throw error;
-    cloudItems=Array.isArray(data?.scans) ? data.scans : [];
+    items=Array.isArray(data?.scans) ? data.scans : [];
   }catch(e){
     console.warn("Cloud scan history failed, using browser fallback:",e);
     if(note) note.textContent="Could not load cloud history right now. Showing recent scans saved on this browser.";
     try{
-      cloudItems=JSON.parse(localStorage.getItem(fynalhireScanHistoryKey())||"[]").map(item=>({
+      items=JSON.parse(localStorage.getItem(fynalhireScanHistoryKey())||"[]").map(item=>({
         id:item.id,
         created_at:item.date,
         role_title:item.title,
         score:item.score,
         score_display:`${Number(item.score||0).toFixed(1)}/10`,
-        verdict:item.verdict
+        verdict:item.verdict,
+        result_json:null,
+        local_only:true
       }));
-    }catch(_){cloudItems=[];}
+    }catch(_){items=[];}
   }
 
-  if(!cloudItems.length){
+  cloudScanHistoryItems=items;
+
+  if(!items.length){
     if(note) note.textContent="Your paid-plan scan history will appear here after you run scans.";
     list.innerHTML='<p class="account-muted">No saved scans found yet. Run a scan and it will appear here.</p>';
     return;
   }
 
-  if(note) note.textContent="Saved scan history from your FynalHire account.";
-  list.innerHTML=cloudItems.map(item=>{
+  if(note) note.textContent="Saved scan history from your FynalHire account. Reports show only the sections available under the plan used/currently allowed.";
+  list.innerHTML=items.map((item,index)=>{
     const d=new Date(item.created_at || item.date || Date.now());
     const date=Number.isNaN(d.getTime())?"Recent":d.toLocaleString(undefined,{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
     const scoreNumber=Number(item.score || 0);
     const scoreText=item.score_display || `${scoreNumber.toFixed(1)}/10`;
     const title=item.role_title || item.title || "CV Scan";
     const userType=item.user_type ? ` · ${esc(item.user_type)}` : "";
+    const canView=!!item.result_json;
     return `<div style="border:1px solid #dbeafe;border-radius:14px;padding:14px;background:#f8fbff">
       <div style="font-weight:900;color:#0f172a">${esc(title)}</div>
       <div class="account-muted" style="margin-top:6px">Score: <strong>${esc(scoreText)}</strong> · ${esc(date)}${userType}</div>
+      ${item.verdict?`<div class="account-muted" style="margin-top:6px">${esc(item.verdict)}</div>`:""}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-        <button type="button" class="btn-outline" style="padding:8px 12px;border-radius:10px" onclick="showGlobalNotice('View Report will be added in the next step. Your scan is already saved in cloud history.')">View Report</button>
-        <button type="button" class="btn-outline" style="padding:8px 12px;border-radius:10px" onclick="showGlobalNotice('PDF export will be added after cloud report viewing is stable.')">Download PDF</button>
+        <button type="button" class="btn-outline" style="padding:8px 12px;border-radius:10px" onclick="openSavedScanReport(${index})" ${canView?"":"disabled"}>View Report</button>
+        <button type="button" class="btn-outline" style="padding:8px 12px;border-radius:10px" onclick="showGlobalNotice('PDF export is next. The report viewer is now active and PDF will be generated from the same saved plan-gated report.')">PDF coming soon</button>
       </div>
     </div>`;
   }).join("");
 }
+
+function closeSavedReportModal(){
+  const modal=document.getElementById("savedReportModal");
+  if(modal) modal.style.display="none";
+}
+
+function openSavedScanReport(index){
+  const item=cloudScanHistoryItems && cloudScanHistoryItems[index];
+  const modal=document.getElementById("savedReportModal");
+  const content=document.getElementById("savedReportContent");
+  if(!modal || !content) return;
+
+  if(!item || !item.result_json){
+    showGlobalNotice("This older scan has no saved report body. Run a new scan to save a full cloud report.","warning");
+    return;
+  }
+
+  const d=new Date(item.created_at || Date.now());
+  const date=Number.isNaN(d.getTime())?"Recent":d.toLocaleString(undefined,{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
+  content.innerHTML=renderSavedReportHtml(item.result_json,item,date);
+  modal.style.display="flex";
+}
+
+function renderSavedReportHtml(r,item,date){
+  const plan=normalizePlan(currentProfile?.plan || "free");
+  const type=currentProfile?.user_type || item?.user_type || selectedArea || "jobseeker";
+  const score=Number(r?.overall_score || item?.score || 0).toFixed(1);
+  const title=item?.role_title || r?.role_title || "Saved CV Report";
+  const activePaid=!isFreePlan(plan) && isPlanCurrentlyActive();
+  const isGrowth=plan==="growth" && activePaid;
+  const isElite=plan==="elite" && activePaid;
+  const isRecruiterPremium=plan==="rec_premium" && activePaid;
+  const isRecruiter=type==="recruiter";
+
+  const header=`
+    <div class="saved-report-head">
+      <div>
+        <h2 style="margin-bottom:6px">${esc(title)}</h2>
+        <div class="saved-report-meta">Saved: ${esc(date)} · Current plan: ${esc(planLabel(plan))}</div>
+      </div>
+      <div class="score" style="font-size:42px;text-align:right">${score}<span style="font-size:22px;color:#64748b">/10</span></div>
+    </div>
+    <p style="color:#334155;line-height:1.75"><strong>${esc(r?.verdict || "")}</strong></p>
+    ${r?.summary?`<p style="color:#334155;line-height:1.75">${esc(r.summary)}</p>`:""}
+    <div class="report-lock-note">This saved report is rendered with plan-gated access. Free/Growth users do not see Elite-only sections.</div>
+  `;
+
+  if(!activePaid){
+    return header+`
+      <div class="limit-box"><p>Your current plan does not include full saved report viewing.</p><p>Upgrade to access detailed saved reports and future PDF export.</p></div>
+    `;
+  }
+
+  if(isRecruiter){
+    if(!isRecruiterPremium){
+      return header+`
+        <div class="insights">
+          ${listCard("✅ Top JD Match Signals",(r?.cv_proves_well||[]).slice(0,5))}
+          ${listCard("⚠️ Top Risk Indicators",(r?.risk_flags?.length?r.risk_flags:r?.missing_or_weak||[]).slice(0,3),"warning")}
+          ${textCard("🏢 Seniority Fit Estimate",r?.executive_presence?.comment || r?.summary)}
+        </div>
+        <div class="limit-box"><p>Recruiter Free report view is limited. Upgrade to Recruiter Premium for full risk flags, interview focus and shortlist decision tools.</p></div>
+      `;
+    }
+    return header+`
+      <div class="insights">
+        ${listCard("🧭 What The Role Actually Requires™",r?.jd_really_wants)}
+        ${listCard("✅ Candidate Evidence Found™",r?.cv_proves_well)}
+        ${listCard("⚠️ Role-Fit Gaps / Concerns™",r?.missing_or_weak,"warning")}
+        ${listCard("🔑 Keywords Found",r?.keywords_found)}
+        ${listCard("❌ Keywords Missing",r?.keywords_missing,"warning")}
+        ${textCard("🪞 Professional Tone Analysis™",r?.human_tone_analysis,"warning")}
+        ${textCard("🧠 Recruiter Decision Brief™",r?.recruiter_mind_simulation,"purple")}
+        ${textCard("⚡ 8 Second Screening Test™",r?.eight_second_test?.finding,"warning")}
+        ${listCard("🚩 Hiring Risk Flags™",r?.risk_flags?.length?r.risk_flags:r?.why_not_shortlisted,"warning")}
+        ${listCard("🎯 Interview Focus Questions™",r?.what_to_add)}
+        ${textCard("💼 Commercial / Business Impact Evidence™",r?.commercial_impact)}
+        ${textCard("👔 Seniority & Executive Presence Signal™",r?.executive_presence?.comment)}
+      </div>
+      <p class="fh-small-note">${esc(r?.disclaimer||"FynalHire provides AI-assisted analysis only and does not guarantee hiring outcomes.")}</p>
+    `;
+  }
+
+  const base=`
+    <div class="insights">
+      ${listCard("🧭 What The JD Actually Wants™",r?.jd_really_wants)}
+      ${listCard("✅ What Your CV Already Proves Well™",r?.cv_proves_well)}
+      ${listCard("⚠️ What Is Missing Or Weak™",r?.missing_or_weak,"warning")}
+      ${listCard("🔑 Keywords Found",r?.keywords_found)}
+      ${listCard("❌ Keywords Missing",r?.keywords_missing,"warning")}
+      ${textCard("🪞 Human Tone Analysis™",r?.human_tone_analysis,"warning")}
+      ${isElite?`
+        ${listCard("➕ What To Add To Your CV™",r?.what_to_add)}
+        ${textCard("🧠 Recruiter Mind Simulation™",r?.recruiter_mind_simulation,"purple")}
+        ${textCard("⚡ 8 Second Recruiter Test™",r?.eight_second_test?.finding,"warning")}
+        ${textCard("💼 Commercial Impact Analysis™",r?.commercial_impact)}
+        ${textCard("👔 Executive Presence™",r?.executive_presence?.comment)}
+        ${listCard("🚩 Shortlist Risk Factors™",r?.why_not_shortlisted,"warning")}
+        ${listCard("⚠️ Recruiter Risk Flags",r?.risk_flags,"warning")}
+      `:""}
+      ${isGrowth?`<div class="insight warning"><h4>🔒 Elite Insights Locked</h4><p>Upgrade to Elite to unlock What To Add To Your CV™, Recruiter Mind Simulation™, 8 Second Recruiter Test™, Commercial Impact Analysis™, Executive Presence™, and Shortlist Risk Factors™.</p></div>`:""}
+    </div>
+    <p class="fh-small-note">${esc(r?.disclaimer||"FynalHire provides AI-assisted analysis only and does not guarantee employment outcomes.")}</p>
+  `;
+  return header+base;
+}
+
 
 
 function showPage(page){
