@@ -16,9 +16,6 @@ window.addEventListener("DOMContentLoaded",()=>{
 });
 
 </script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-
 <style>
 :root{
   --accent:#2563eb;
@@ -392,55 +389,6 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
   .feedback-float-btn{right:14px;bottom:14px;padding:12px 14px;font-size:13px}
 }
 
-
-/* Saved report modal */
-.saved-report-modal .auth-modal{
-  max-width:980px;
-  max-height:88vh;
-  overflow:auto;
-}
-.saved-report-head{
-  display:flex;
-  justify-content:space-between;
-  gap:16px;
-  align-items:flex-start;
-  margin-bottom:14px;
-}
-.saved-report-meta{
-  color:#64748b;
-  font-size:13px;
-  line-height:1.5;
-}
-.saved-report-actions{
-  display:flex;
-  gap:10px;
-  flex-wrap:wrap;
-  margin:14px 0 20px;
-}
-
-.pdf-export-working{
-  border:1.5px solid #bfdbfe;
-  background:#eff6ff;
-  color:#1d4ed8;
-  border-radius:14px;
-  padding:12px;
-  font-weight:800;
-  line-height:1.5;
-  margin:12px 0;
-}
-.no-pdf{ }
-
-.report-lock-note{
-  border:1.5px solid #f59e0b;
-  background:#fef3c7;
-  color:#92400e;
-  border-radius:14px;
-  padding:14px;
-  font-weight:800;
-  line-height:1.5;
-  margin:12px 0;
-}
-
 </style>
 </head>
 <body>
@@ -481,17 +429,6 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
     <div id="feedbackStatus" class="auth-status"></div>
     <button type="button" class="btn-primary" style="width:100%;margin-top:10px" onclick="sendFeedbackEmail()">Send Feedback</button>
     <p class="feedback-small">Your feedback will be sent securely to our team. Please include your email so we can thank you, follow up, or learn from your experience.</p>
-  </div>
-</div>
-
-
-<div id="savedReportModal" class="auth-modal-overlay saved-report-modal">
-  <div class="auth-modal">
-    <button type="button" class="auth-close" onclick="closeSavedReportModal()">Close</button>
-    <div id="savedReportContent">
-      <h2>Saved Report</h2>
-      <p class="account-muted">Loading report...</p>
-    </div>
   </div>
 </div>
 
@@ -777,14 +714,11 @@ let currentUser=null;
 let currentProfile=null;
 let suppressNextLogoutNotice=false;
 let pendingSignupRole=localStorage.getItem("fh_pending_signup_role")||"";
-let cloudScanHistoryItems=[];
-let activeSavedReportIndex=null;
 
 const SUBSCRIPTION_CHECKOUT_FUNCTION="create-subscription-checkout";
 const SYNC_SUBSCRIPTION_FUNCTION="sync-my-subscription";
 const CANCEL_SUBSCRIPTION_FUNCTION="cancel-subscription";
 const SUBMIT_FEEDBACK_FUNCTION="submit-feedback";
-const GET_SCAN_HISTORY_FUNCTION="get-scan-history";
 
 const CHECKOUT_PLAN_MAP={
   growth:"growth",
@@ -1514,7 +1448,7 @@ function saveScanHistoryEntry(jd,cv,result,usage){
   }
 }
 
-async function renderScanHistory(){
+function renderScanHistory(){
   const section=document.getElementById("scanHistorySection");
   const list=document.getElementById("scanHistoryList");
   const note=document.getElementById("scanHistoryNote");
@@ -1526,288 +1460,30 @@ async function renderScanHistory(){
   if(!paid){
     section.style.display="none";
     list.innerHTML="";
-    cloudScanHistoryItems=[];
     return;
   }
-
-  section.style.display="block";
-  if(note) note.textContent="Loading saved scan history from your FynalHire account...";
-  list.innerHTML='<p class="account-muted">Loading recent scans...</p>';
 
   let items=[];
-  try{
-    const {data,error}=await fynalhireClient.functions.invoke(GET_SCAN_HISTORY_FUNCTION,{body:{limit:12,include_report:true}});
-    if(error) throw error;
-    items=Array.isArray(data?.scans) ? data.scans : [];
-  }catch(e){
-    console.warn("Cloud scan history failed, using browser fallback:",e);
-    if(note) note.textContent="Could not load cloud history right now. Showing recent scans saved on this browser.";
-    try{
-      items=JSON.parse(localStorage.getItem(fynalhireScanHistoryKey())||"[]").map(item=>({
-        id:item.id,
-        created_at:item.date,
-        role_title:item.title,
-        score:item.score,
-        score_display:`${Number(item.score||0).toFixed(1)}/10`,
-        verdict:item.verdict,
-        result_json:null,
-        local_only:true
-      }));
-    }catch(_){items=[];}
-  }
+  try{items=JSON.parse(localStorage.getItem(fynalhireScanHistoryKey())||"[]");}catch(_){items=[];}
 
-  cloudScanHistoryItems=items;
+  section.style.display="block";
+  if(note) note.textContent="Recent scan history for this browser. Full cloud history can be added as the next backend step.";
 
   if(!items.length){
-    if(note) note.textContent="Your paid-plan scan history will appear here after you run scans.";
-    list.innerHTML='<p class="account-muted">No saved scans found yet. Run a scan and it will appear here.</p>';
+    list.innerHTML='<p class="account-muted">No recent scans saved on this browser yet. Run a scan and it will appear here.</p>';
     return;
   }
 
-  if(note) note.textContent="Saved scan history from your FynalHire account. Reports show only the sections available under the plan used/currently allowed.";
-  list.innerHTML=items.map((item,index)=>{
-    const d=new Date(item.created_at || item.date || Date.now());
+  list.innerHTML=items.map(item=>{
+    const d=new Date(item.date);
     const date=Number.isNaN(d.getTime())?"Recent":d.toLocaleString(undefined,{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
-    const scoreNumber=Number(item.score || 0);
-    const scoreText=item.score_display || `${scoreNumber.toFixed(1)}/10`;
-    const title=item.role_title || item.title || "CV Scan";
-    const userType=item.user_type ? ` · ${esc(item.user_type)}` : "";
-    const canView=!!item.result_json;
     return `<div style="border:1px solid #dbeafe;border-radius:14px;padding:14px;background:#f8fbff">
-      <div style="font-weight:900;color:#0f172a">${esc(title)}</div>
-      <div class="account-muted" style="margin-top:6px">Score: <strong>${esc(scoreText)}</strong> · ${esc(date)}${userType}</div>
+      <div style="font-weight:900;color:#0f172a">${esc(item.title||"CV scan")}</div>
+      <div class="account-muted" style="margin-top:6px">Score: <strong>${Number(item.score||0).toFixed(1)}/10</strong> · ${esc(date)}</div>
       ${item.verdict?`<div class="account-muted" style="margin-top:6px">${esc(item.verdict)}</div>`:""}
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-        <button type="button" class="btn-outline" style="padding:8px 12px;border-radius:10px" onclick="openSavedScanReport(${index})" ${canView?"":"disabled"}>View Report</button>
-        <button type="button" class="btn-outline" style="padding:8px 12px;border-radius:10px" onclick="downloadSavedScanPdf(${index})" ${canView?"":"disabled"}>Download PDF</button>
-      </div>
     </div>`;
   }).join("");
 }
-
-function closeSavedReportModal(){
-  const modal=document.getElementById("savedReportModal");
-  if(modal) modal.style.display="none";
-}
-
-function openSavedScanReport(index){
-  const item=cloudScanHistoryItems && cloudScanHistoryItems[index];
-  const modal=document.getElementById("savedReportModal");
-  const content=document.getElementById("savedReportContent");
-  if(!modal || !content) return;
-
-  if(!item || !item.result_json){
-    showGlobalNotice("This older scan has no saved report body. Run a new scan to save a full cloud report.","warning");
-    return;
-  }
-
-  const d=new Date(item.created_at || Date.now());
-  const date=Number.isNaN(d.getTime())?"Recent":d.toLocaleString(undefined,{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
-  activeSavedReportIndex=index;
-  content.innerHTML=`
-    <div class="saved-report-actions no-pdf">
-      <button type="button" class="btn-primary" onclick="downloadSavedScanPdf(${index})">Download PDF</button>
-      <button type="button" class="btn-outline" onclick="closeSavedReportModal()">Close</button>
-    </div>
-    ${renderSavedReportHtml(item.result_json,item,date)}
-  `;
-  modal.style.display="flex";
-}
-
-
-function makePdfSafeFilename(value){
-  const base=String(value || "FynalHire_Report")
-    .replace(/[^a-z0-9\-_. ]/gi," ")
-    .replace(/\s+/g," ")
-    .trim()
-    .slice(0,80) || "FynalHire_Report";
-  return base.replace(/\s+/g,"_")+".pdf";
-}
-
-async function downloadSavedScanPdf(index){
-  const item=cloudScanHistoryItems && cloudScanHistoryItems[index];
-  if(!item || !item.result_json){
-    showGlobalNotice("This report is not available for PDF export. Please run a new scan and try again.","warning");
-    return;
-  }
-
-  const plan=normalizePlan(currentProfile?.plan || "free");
-  const activePaid=!isFreePlan(plan) && isPlanCurrentlyActive();
-  if(!activePaid){
-    showGlobalNotice("PDF export is available for paid plans only. Please upgrade to export saved reports.","warning");
-    return;
-  }
-
-  const d=new Date(item.created_at || Date.now());
-  const date=Number.isNaN(d.getTime())?"Recent":d.toLocaleString(undefined,{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
-  const title=item.role_title || item.title || item.result_json?.role_title || "FynalHire Report";
-
-  try{
-    showGlobalNotice("Preparing your PDF report...");
-
-    const wrapper=document.createElement("div");
-    wrapper.style.position="fixed";
-    wrapper.style.left="-10000px";
-    wrapper.style.top="0";
-    wrapper.style.width="900px";
-    wrapper.style.background="#ffffff";
-    wrapper.style.color="#0f172a";
-    wrapper.style.padding="34px";
-    wrapper.style.fontFamily="Arial, sans-serif";
-    wrapper.innerHTML=`
-      <div style="border-bottom:2px solid #dbeafe;padding-bottom:16px;margin-bottom:20px">
-        <h1 style="margin:0;color:#0f172a;font-size:30px"><span style="color:#2563eb">Fynal</span>Hire Report</h1>
-        <p style="margin:8px 0 0;color:#64748b;font-size:13px">Generated from the saved, plan-gated report available to this account.</p>
-      </div>
-      ${renderSavedReportHtml(item.result_json,item,date)}
-      <div style="border-top:1px solid #dbeafe;margin-top:24px;padding-top:12px;color:#64748b;font-size:11px;line-height:1.5">
-        FynalHire provides AI-assisted hiring analysis only. It does not guarantee interviews, selection, hiring decisions, or employment outcomes.
-      </div>
-    `;
-    document.body.appendChild(wrapper);
-
-    const noPdfEls=wrapper.querySelectorAll(".no-pdf");
-    noPdfEls.forEach(el=>el.style.display="none");
-
-    if(!window.html2canvas || !window.jspdf?.jsPDF){
-      document.body.removeChild(wrapper);
-      openPrintableReport(index);
-      return;
-    }
-
-    const canvas=await window.html2canvas(wrapper,{scale:2,useCORS:true,backgroundColor:"#ffffff"});
-    const imgData=canvas.toDataURL("image/png");
-    const pdf=new window.jspdf.jsPDF("p","mm","a4");
-    const pageWidth=pdf.internal.pageSize.getWidth();
-    const pageHeight=pdf.internal.pageSize.getHeight();
-    const imgWidth=pageWidth;
-    const imgHeight=(canvas.height*imgWidth)/canvas.width;
-
-    let heightLeft=imgHeight;
-    let position=0;
-    pdf.addImage(imgData,"PNG",0,position,imgWidth,imgHeight);
-    heightLeft-=pageHeight;
-
-    while(heightLeft>0){
-      position=heightLeft-imgHeight;
-      pdf.addPage();
-      pdf.addImage(imgData,"PNG",0,position,imgWidth,imgHeight);
-      heightLeft-=pageHeight;
-    }
-
-    pdf.save(makePdfSafeFilename(title));
-    document.body.removeChild(wrapper);
-    showGlobalNotice("PDF downloaded successfully.");
-  }catch(e){
-    console.error("PDF export failed:",e);
-    showGlobalNotice("PDF download could not be completed. Opening a printable report instead.","warning");
-    openPrintableReport(index);
-  }
-}
-
-function openPrintableReport(index){
-  const item=cloudScanHistoryItems && cloudScanHistoryItems[index];
-  if(!item || !item.result_json) return;
-  const d=new Date(item.created_at || Date.now());
-  const date=Number.isNaN(d.getTime())?"Recent":d.toLocaleString(undefined,{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
-  const html=renderSavedReportHtml(item.result_json,item,date);
-  const win=window.open("","_blank");
-  if(!win){
-    showGlobalNotice("Please allow pop-ups to print/download this report.","warning");
-    return;
-  }
-  win.document.write(`<!doctype html><html><head><title>FynalHire Report</title><style>
-    body{font-family:Arial,sans-serif;color:#0f172a;margin:32px;line-height:1.5}
-    .score{color:#2563eb;font-weight:900}.insights{display:grid;grid-template-columns:1fr;gap:12px}.insight{border:1px solid #dbeafe;border-radius:12px;padding:14px;margin:10px 0}.warning{background:#fef3c7}.purple{background:#ede9fe}.fh-result-list{line-height:1.6}.report-lock-note,.limit-box{border:1px solid #f59e0b;background:#fef3c7;padding:12px;border-radius:12px}.saved-report-head{display:flex;justify-content:space-between;gap:16px}.saved-report-meta,.fh-small-note{color:#64748b;font-size:12px}.no-pdf{display:none}
-    @media print{button{display:none}}
-  </style></head><body><h1><span style="color:#2563eb">Fynal</span>Hire Report</h1>${html}<script>window.onload=()=>window.print();<\/script></body></html>`);
-  win.document.close();
-}
-
-function renderSavedReportHtml(r,item,date){
-  const plan=normalizePlan(currentProfile?.plan || "free");
-  const type=currentProfile?.user_type || item?.user_type || selectedArea || "jobseeker";
-  const score=Number(r?.overall_score || item?.score || 0).toFixed(1);
-  const title=item?.role_title || r?.role_title || "Saved CV Report";
-  const activePaid=!isFreePlan(plan) && isPlanCurrentlyActive();
-  const isGrowth=plan==="growth" && activePaid;
-  const isElite=plan==="elite" && activePaid;
-  const isRecruiterPremium=plan==="rec_premium" && activePaid;
-  const isRecruiter=type==="recruiter";
-
-  const header=`
-    <div class="saved-report-head">
-      <div>
-        <h2 style="margin-bottom:6px">${esc(title)}</h2>
-        <div class="saved-report-meta">Saved: ${esc(date)} · Current plan: ${esc(planLabel(plan))}</div>
-      </div>
-      <div class="score" style="font-size:42px;text-align:right">${score}<span style="font-size:22px;color:#64748b">/10</span></div>
-    </div>
-    <p style="color:#334155;line-height:1.75"><strong>${esc(r?.verdict || "")}</strong></p>
-    ${r?.summary?`<p style="color:#334155;line-height:1.75">${esc(r.summary)}</p>`:""}
-    <div class="report-lock-note">This saved report is rendered with plan-gated access. Free/Growth users do not see Elite-only sections.</div>
-  `;
-
-  if(!activePaid){
-    return header+`
-      <div class="limit-box"><p>Your current plan does not include full saved report viewing.</p><p>Upgrade to access detailed saved reports and future PDF export.</p></div>
-    `;
-  }
-
-  if(isRecruiter){
-    if(!isRecruiterPremium){
-      return header+`
-        <div class="insights">
-          ${listCard("✅ Top JD Match Signals",(r?.cv_proves_well||[]).slice(0,5))}
-          ${listCard("⚠️ Top Risk Indicators",(r?.risk_flags?.length?r.risk_flags:r?.missing_or_weak||[]).slice(0,3),"warning")}
-          ${textCard("🏢 Seniority Fit Estimate",r?.executive_presence?.comment || r?.summary)}
-        </div>
-        <div class="limit-box"><p>Recruiter Free report view is limited. Upgrade to Recruiter Premium for full risk flags, interview focus and shortlist decision tools.</p></div>
-      `;
-    }
-    return header+`
-      <div class="insights">
-        ${listCard("🧭 What The Role Actually Requires™",r?.jd_really_wants)}
-        ${listCard("✅ Candidate Evidence Found™",r?.cv_proves_well)}
-        ${listCard("⚠️ Role-Fit Gaps / Concerns™",r?.missing_or_weak,"warning")}
-        ${listCard("🔑 Keywords Found",r?.keywords_found)}
-        ${listCard("❌ Keywords Missing",r?.keywords_missing,"warning")}
-        ${textCard("🪞 Professional Tone Analysis™",r?.human_tone_analysis,"warning")}
-        ${textCard("🧠 Recruiter Decision Brief™",r?.recruiter_mind_simulation,"purple")}
-        ${textCard("⚡ 8 Second Screening Test™",r?.eight_second_test?.finding,"warning")}
-        ${listCard("🚩 Hiring Risk Flags™",r?.risk_flags?.length?r.risk_flags:r?.why_not_shortlisted,"warning")}
-        ${listCard("🎯 Interview Focus Questions™",r?.what_to_add)}
-        ${textCard("💼 Commercial / Business Impact Evidence™",r?.commercial_impact)}
-        ${textCard("👔 Seniority & Executive Presence Signal™",r?.executive_presence?.comment)}
-      </div>
-      <p class="fh-small-note">${esc(r?.disclaimer||"FynalHire provides AI-assisted analysis only and does not guarantee hiring outcomes.")}</p>
-    `;
-  }
-
-  const base=`
-    <div class="insights">
-      ${listCard("🧭 What The JD Actually Wants™",r?.jd_really_wants)}
-      ${listCard("✅ What Your CV Already Proves Well™",r?.cv_proves_well)}
-      ${listCard("⚠️ What Is Missing Or Weak™",r?.missing_or_weak,"warning")}
-      ${listCard("🔑 Keywords Found",r?.keywords_found)}
-      ${listCard("❌ Keywords Missing",r?.keywords_missing,"warning")}
-      ${textCard("🪞 Human Tone Analysis™",r?.human_tone_analysis,"warning")}
-      ${isElite?`
-        ${listCard("➕ What To Add To Your CV™",r?.what_to_add)}
-        ${textCard("🧠 Recruiter Mind Simulation™",r?.recruiter_mind_simulation,"purple")}
-        ${textCard("⚡ 8 Second Recruiter Test™",r?.eight_second_test?.finding,"warning")}
-        ${textCard("💼 Commercial Impact Analysis™",r?.commercial_impact)}
-        ${textCard("👔 Executive Presence™",r?.executive_presence?.comment)}
-        ${listCard("🚩 Shortlist Risk Factors™",r?.why_not_shortlisted,"warning")}
-        ${listCard("⚠️ Recruiter Risk Flags",r?.risk_flags,"warning")}
-      `:""}
-      ${isGrowth?`<div class="insight warning"><h4>🔒 Elite Insights Locked</h4><p>Upgrade to Elite to unlock What To Add To Your CV™, Recruiter Mind Simulation™, 8 Second Recruiter Test™, Commercial Impact Analysis™, Executive Presence™, and Shortlist Risk Factors™.</p></div>`:""}
-    </div>
-    <p class="fh-small-note">${esc(r?.disclaimer||"FynalHire provides AI-assisted analysis only and does not guarantee employment outcomes.")}</p>
-  `;
-  return header+base;
-}
-
 
 
 function showPage(page){
@@ -2748,18 +2424,17 @@ function renderScanLimitUpgradeCard(data){
   results.style.display="block";
   results.innerHTML=`
     <div class="upgrade-limit-card">
-      <h3>Your free scans for this month are over.</h3>
-      <p>You have used all free scans included in your current plan.</p>
+      <h3>Free scan limit reached</h3>
+      <p>Your free scans for this month are finished. Please wait for the monthly reset, or upgrade for unlimited scans.</p>
       <div class="scan-balance-pill">Monthly usage: ${used || limit} / ${limit} scans used</div>
       <ul>
-        <li>Upgrade to continue scanning without waiting for next month.</li>
-        <li>${isRecruiter ? "Unlock candidate screening, ranking and recruiter risk insights." : "Unlock unlimited scans, detailed recruiter analysis and improvement guidance."}</li>
-        <li>Free scans reset monthly.</li>
+        <li>${isRecruiter ? "Recruiter Free includes 2 scans per month." : "Free Job Seeker includes 3 scans per month."}</li>
+        <li>${isRecruiter ? "Upgrade to continue screening candidates and unlock recruiter risk insights." : "Upgrade to continue improving your applications with detailed recruiter-style feedback."}</li>
+        <li>Your free allowance resets automatically next month.</li>
       </ul>
       <div class="upgrade-limit-actions">
-        <button type="button" class="btn-primary" onclick="showPricingFor('${isRecruiter ? "recruiter" : "jobseeker"}')">Upgrade Plan</button>
+        <button type="button" class="btn-primary" onclick="showPricingFor('${isRecruiter ? "recruiter" : "jobseeker"}')">Upgrade for Unlimited Scans</button>
         <button type="button" class="btn-outline" onclick="showMyAccount()">View My Account</button>
-        <a class="btn-outline" style="text-decoration:none;display:inline-block" href="mailto:info@fynalhire.com">Contact Us</a>
       </div>
     </div>
   `;
@@ -2850,7 +2525,7 @@ async function analyzeWithFynalHireAPI(event){
       }else{
         results.innerHTML='<div class="limit-box"><p>Analysis failed: '+esc(data.message||data.error||"Unknown error")+'</p><p>Please try again. If this continues, contact support if the issue continues.</p></div>';
       }
-      setDebug("Analysis failed: "+(data.message||data.error||"Unknown error"),"error");
+      setDebug(data.error==="SCAN_LIMIT_REACHED" ? "Free scan limit reached." : "Analysis failed: "+(data.message||data.error||"Unknown error"),"error");
       return;
     }
 
