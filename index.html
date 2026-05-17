@@ -424,7 +424,6 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
       <option value="Bug Report">Bug Report</option>
       <option value="Feature Request">Feature Request</option>
     </select>
-    <input id="feedbackName" type="text" placeholder="Your name (optional)">
     <input id="feedbackEmail" type="email" placeholder="Your email address (required)" required>
     <textarea id="feedbackMessage" placeholder="Tell us what worked, what did not, or how FynalHire helped you..."></textarea>
     <div id="feedbackStatus" class="auth-status"></div>
@@ -720,6 +719,7 @@ const SUBSCRIPTION_CHECKOUT_FUNCTION="create-subscription-checkout";
 const SYNC_SUBSCRIPTION_FUNCTION="sync-my-subscription";
 const CANCEL_SUBSCRIPTION_FUNCTION="cancel-subscription";
 const SUBMIT_FEEDBACK_FUNCTION="submit-feedback";
+const GET_SCAN_HISTORY_FUNCTION="get-scan-history";
 
 const CHECKOUT_PLAN_MAP={
   growth:"growth",
@@ -754,7 +754,6 @@ function showFeedbackStatus(message,type=""){
 
 async function sendFeedbackEmail(){
   const type=(document.getElementById("feedbackType")?.value || "General Feedback").trim();
-  const name=(document.getElementById("feedbackName")?.value || "").trim();
   const email=(document.getElementById("feedbackEmail")?.value || "").trim();
   const message=(document.getElementById("feedbackMessage")?.value || "").trim();
   const sendBtn=Array.from(document.querySelectorAll("button")).find(btn=>btn.textContent?.trim()==="Send Feedback");
@@ -779,12 +778,9 @@ async function sendFeedbackEmail(){
     showFeedbackStatus("Sending your feedback securely...","success");
 
     const payload={
-      name,
       type,
-      feedback_type:type,
       email,
       message,
-      page_url:window.location.href,
       page:window.location.href,
       plan:currentProfile?.plan ? planLabel(currentProfile.plan) : "Unknown",
       user_type:currentProfile?.user_type || selectedArea || "unknown",
@@ -796,26 +792,22 @@ async function sendFeedbackEmail(){
 
     if(error){
       console.error("Feedback submission error:",error);
-      showFeedbackStatus("Feedback could not be submitted right now. Please try again, or contact info@fynalhire.com if the issue continues.","error");
+      showFeedbackStatus(error.message || "Feedback could not be sent. Please try again or email info@fynalhire.com.","error");
       return;
     }
 
-    if(data?.ok || data?.saved || data?.emailed){
-      let msg="Thank you. Your feedback has been received by the FynalHire team.";
-      if(data?.saved && !data?.emailed){
-        msg="Thank you. Your feedback has been saved. If email delivery is temporarily unavailable, our team can still review it in the system.";
-      }
-      showFeedbackStatus(msg,"success");
+    if(data?.ok){
+      showFeedbackStatus("Thank you. Your feedback has been sent to the FynalHire team.","success");
       const messageBox=document.getElementById("feedbackMessage");
       if(messageBox) messageBox.value="";
-      setTimeout(()=>closeFeedbackModal(),1600);
+      setTimeout(()=>closeFeedbackModal(),1400);
       return;
     }
 
     showFeedbackStatus(data?.message || "Feedback received. Thank you for helping us improve.","success");
   }catch(e){
     console.error("Feedback exception:",e);
-    showFeedbackStatus("Feedback could not be submitted right now. Please try again, or contact info@fynalhire.com if the issue continues.","error");
+    showFeedbackStatus("Feedback could not be sent right now. Please try again or contact info@fynalhire.com.","error");
   }finally{
     if(sendBtn){sendBtn.disabled=false;sendBtn.textContent="Send Feedback";}
   }
@@ -1457,7 +1449,7 @@ function saveScanHistoryEntry(jd,cv,result,usage){
   }
 }
 
-function renderScanHistory(){
+async function renderScanHistory(){
   const section=document.getElementById("scanHistorySection");
   const list=document.getElementById("scanHistoryList");
   const note=document.getElementById("scanHistoryNote");
@@ -1472,24 +1464,51 @@ function renderScanHistory(){
     return;
   }
 
-  let items=[];
-  try{items=JSON.parse(localStorage.getItem(fynalhireScanHistoryKey())||"[]");}catch(_){items=[];}
-
   section.style.display="block";
-  if(note) note.textContent="Recent scan history for this browser. Full cloud history can be added as the next backend step.";
+  if(note) note.textContent="Loading your saved scan history from your FynalHire account...";
+  list.innerHTML='<p class="account-muted">Loading recent scans...</p>';
 
-  if(!items.length){
-    list.innerHTML='<p class="account-muted">No recent scans saved on this browser yet. Run a scan and it will appear here.</p>';
+  let cloudItems=[];
+  try{
+    const {data,error}=await fynalhireClient.functions.invoke(GET_SCAN_HISTORY_FUNCTION,{body:{limit:12}});
+    if(error) throw error;
+    cloudItems=Array.isArray(data?.scans) ? data.scans : [];
+  }catch(e){
+    console.warn("Cloud scan history failed, using browser fallback:",e);
+    if(note) note.textContent="Could not load cloud history right now. Showing recent scans saved on this browser.";
+    try{
+      cloudItems=JSON.parse(localStorage.getItem(fynalhireScanHistoryKey())||"[]").map(item=>({
+        id:item.id,
+        created_at:item.date,
+        role_title:item.title,
+        score:item.score,
+        score_display:`${Number(item.score||0).toFixed(1)}/10`,
+        verdict:item.verdict
+      }));
+    }catch(_){cloudItems=[];}
+  }
+
+  if(!cloudItems.length){
+    if(note) note.textContent="Your paid-plan scan history will appear here after you run scans.";
+    list.innerHTML='<p class="account-muted">No saved scans found yet. Run a scan and it will appear here.</p>';
     return;
   }
 
-  list.innerHTML=items.map(item=>{
-    const d=new Date(item.date);
+  if(note) note.textContent="Saved scan history from your FynalHire account.";
+  list.innerHTML=cloudItems.map(item=>{
+    const d=new Date(item.created_at || item.date || Date.now());
     const date=Number.isNaN(d.getTime())?"Recent":d.toLocaleString(undefined,{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
+    const scoreNumber=Number(item.score || 0);
+    const scoreText=item.score_display || `${scoreNumber.toFixed(1)}/10`;
+    const title=item.role_title || item.title || "CV Scan";
+    const userType=item.user_type ? ` · ${esc(item.user_type)}` : "";
     return `<div style="border:1px solid #dbeafe;border-radius:14px;padding:14px;background:#f8fbff">
-      <div style="font-weight:900;color:#0f172a">${esc(item.title||"CV scan")}</div>
-      <div class="account-muted" style="margin-top:6px">Score: <strong>${Number(item.score||0).toFixed(1)}/10</strong> · ${esc(date)}</div>
-      ${item.verdict?`<div class="account-muted" style="margin-top:6px">${esc(item.verdict)}</div>`:""}
+      <div style="font-weight:900;color:#0f172a">${esc(title)}</div>
+      <div class="account-muted" style="margin-top:6px">Score: <strong>${esc(scoreText)}</strong> · ${esc(date)}${userType}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <button type="button" class="btn-outline" style="padding:8px 12px;border-radius:10px" onclick="showGlobalNotice('View Report will be added in the next step. Your scan is already saved in cloud history.')">View Report</button>
+        <button type="button" class="btn-outline" style="padding:8px 12px;border-radius:10px" onclick="showGlobalNotice('PDF export will be added after cloud report viewing is stable.')">Download PDF</button>
+      </div>
     </div>`;
   }).join("");
 }
