@@ -746,7 +746,20 @@ footer{background:#0f172a;color:white;padding:40px 24px;text-align:center}footer
     <div id="authStatus" class="auth-status"></div>
     <button type="button" class="btn-primary" style="width:100%;margin-top:10px" onclick="signupUser()">Create Account</button>
     <button type="button" class="btn-outline" id="signInBtn" style="width:100%;margin-top:8px" onclick="loginUser()">Sign In</button>
+    <button type="button" style="width:100%;margin-top:8px;background:transparent;border:none;color:#2563eb;font-weight:800;cursor:pointer" onclick="showForgotPassword()">Forgot password?</button>
     <button type="button" class="btn-outline" style="width:100%;margin-top:8px" onclick="loginWithGoogle()">Continue with Google</button>
+  </div>
+</div>
+
+<div id="resetPasswordModal" class="auth-modal-overlay">
+  <div class="auth-modal">
+    <button type="button" class="auth-close" onclick="closeResetPassword()">Close</button>
+    <h2>Set New Password</h2>
+    <p style="color:#334155;line-height:1.6">Enter a new password for your FynalHire account.</p>
+    <input id="newPasswordInput" type="password" placeholder="New password">
+    <input id="confirmNewPasswordInput" type="password" placeholder="Confirm new password">
+    <div id="resetPasswordStatus" class="auth-status"></div>
+    <button type="button" class="btn-primary" style="width:100%;margin-top:10px" onclick="updateForgottenPassword()">Update Password</button>
   </div>
 </div>
 
@@ -2127,6 +2140,113 @@ async function signupUser(){
   }catch(e){showAuthStatus("Unexpected signup error: "+e.message,"error");}
 }
 
+
+function showForgotPassword(){
+  const emailEl=document.getElementById("authEmail");
+  const email=(emailEl?.value || "").trim();
+  setAuthPrompt("Enter your account email address. We will send you a secure password reset link.","Reset your password");
+  openAuth();
+  if(emailEl && email) emailEl.value=email;
+  showAuthStatus(`Enter your email above, then click Send Reset Link.<br><button type="button" class="btn-primary" style="width:100%;margin-top:10px" onclick="sendPasswordResetEmail()">Send Reset Link</button>`);
+}
+
+async function sendPasswordResetEmail(){
+  const email=(document.getElementById("authEmail")?.value || "").trim();
+
+  if(!email){
+    showAuthStatus("Please enter your email address first.","error");
+    return;
+  }
+
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+    showAuthStatus("Please enter a valid email address.","error");
+    return;
+  }
+
+  try{
+    showAuthStatus("Sending password reset link...");
+    const {error}=await fynalhireClient.auth.resetPasswordForEmail(email,{
+      redirectTo: window.location.origin + window.location.pathname + "?reset-password=1"
+    });
+
+    if(error){
+      console.error("Password reset email error:",error);
+      showAuthStatus("Could not send reset link: "+error.message,"error");
+      return;
+    }
+
+    showAuthStatus("Password reset link sent. Please check your email inbox. If you do not see it, check spam/junk folder.","success");
+  }catch(e){
+    console.error("Password reset exception:",e);
+    showAuthStatus("Could not send reset link. Please try again or contact info@fynalhire.com.","error");
+  }
+}
+
+function openResetPasswordModal(){
+  const modal=document.getElementById("resetPasswordModal");
+  const status=document.getElementById("resetPasswordStatus");
+  const p1=document.getElementById("newPasswordInput");
+  const p2=document.getElementById("confirmNewPasswordInput");
+  if(status){status.style.display="none";status.textContent="";}
+  if(p1) p1.value="";
+  if(p2) p2.value="";
+  if(modal) modal.style.display="flex";
+}
+
+function closeResetPassword(){
+  const modal=document.getElementById("resetPasswordModal");
+  if(modal) modal.style.display="none";
+}
+
+function showResetPasswordStatus(message,type=""){
+  const box=document.getElementById("resetPasswordStatus");
+  if(!box)return;
+  box.style.display="block";
+  box.className="auth-status "+type;
+  box.textContent=message;
+}
+
+async function updateForgottenPassword(){
+  const p1=(document.getElementById("newPasswordInput")?.value || "").trim();
+  const p2=(document.getElementById("confirmNewPasswordInput")?.value || "").trim();
+
+  if(!p1 || p1.length<8){
+    showResetPasswordStatus("Please enter a new password with at least 8 characters.","error");
+    return;
+  }
+
+  if(p1!==p2){
+    showResetPasswordStatus("Passwords do not match.","error");
+    return;
+  }
+
+  try{
+    showResetPasswordStatus("Updating your password...");
+    const {error}=await fynalhireClient.auth.updateUser({password:p1});
+
+    if(error){
+      console.error("Password update error:",error);
+      showResetPasswordStatus("Could not update password: "+error.message,"error");
+      return;
+    }
+
+    showResetPasswordStatus("Password updated successfully. You are now signed in.","success");
+    setTimeout(async()=>{
+      closeResetPassword();
+      await afterSuccessfulLogin();
+    },900);
+  }catch(e){
+    console.error("Password update exception:",e);
+    showResetPasswordStatus("Could not update password. Please request a new reset link or contact support.","error");
+  }
+}
+
+function isPasswordResetReturn(){
+  const qs=new URLSearchParams(window.location.search);
+  const hash=new URLSearchParams((window.location.hash || "").replace(/^#/,""));
+  return qs.get("reset-password")==="1" || hash.get("type")==="recovery" || window.location.href.includes("type=recovery");
+}
+
 async function loginUser(){
   const email=document.getElementById("authEmail").value.trim();
   const password=document.getElementById("authPassword").value;
@@ -3086,9 +3206,18 @@ window.addEventListener("load",async()=>{
   console.log("FynalHire compliance footer build loaded.");
   await handleOAuthReturn();
   await refreshAuth();
+  if(isPasswordResetReturn()){
+    openResetPasswordModal();
+  }
   await handlePaymentReturn();
 });
 fynalhireClient.auth.onAuthStateChange((event, session)=>{
+  if(event==="PASSWORD_RECOVERY"){
+    signedIn=!!session;
+    currentUser=session?.user || currentUser;
+    openResetPasswordModal();
+    return;
+  }
   if(event==="SIGNED_IN" || event==="TOKEN_REFRESHED" || event==="USER_UPDATED"){
     signedIn=!!session;
     currentUser=session?.user || currentUser;
